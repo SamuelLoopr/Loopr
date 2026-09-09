@@ -1,0 +1,72 @@
+.magic-bento-card {
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-intensity: 0;
+  --glow-radius: 300px;
+  --glow-color: 132, 0, 255;
+  position: relative;
+}
+
+.magic-bento-card--border-glow::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  background: radial-gradient(
+    var(--glow-radius) circle at var(--glow-x) var(--glow-y),
+    rgba(var(--glow-color), calc(var(--glow-intensity) * 0.9)) 0%,
+    rgba(var(--glow-color), calc(var(--glow-intensity) * 0.45)) 30%,
+    transparent 60%
+  );
+  border-radius: inherit;
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: 2;
+  transition: opacity 0.3s ease;
+}
+
+.magic-bento-card--border-glow:hover {
+  box-shadow:
+    0 8px 25px rgba(0, 0, 0, 0.2),
+    0 0 30px rgba(var(--glow-color), 0.15);
+}
+
+/* No cursor on touch — tilt/magnetism/spotlight-proximity JS deliberately
+   stays off below 768px (see Panel.tsx), so give border-glow a static
+   ambient level here instead of leaving it permanently at 0. */
+@media (max-width: 768px) {
+  .magic-bento-card--border-glow {
+    --glow-intensity: 0.35;
+  }
+}
+
+.magic-bento-particle-container {
+  position: relative;
+}
+
+.magic-bento-particle {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.magic-bento-global-spotlight {
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+  mix-blend-mode: screen;
+  will-change: transform, opacity;
+}
