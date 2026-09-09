@@ -25,6 +25,20 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+/* Root layout chrome for <body>. These live here rather than in an inline
+   style prop on <body> in app/layout.tsx: GSAP's ScrollTrigger writes and then
+   removes border-top-style on document.body when it registers, to measure the
+   body's bounds. That round-trip makes the browser re-serialize the whole
+   style attribute through the CSSOM ("a: b; c: d;" instead of "a:b;c:d"), and
+   React's hydration check compares that attribute as a raw string, so it
+   reported a mismatch on every route. ScrollTrigger removes the attribute it
+   created only when <body> had no style attribute to begin with, so keeping
+   <body> free of inline styles is what lets that cleanup run. */
+body {
+  min-height: 100vh;
+  position: relative;
+}
+
 /* Breathing pulse for the live-call mic orb (Test tab + public demo page) */
 @keyframes looprPulse {
   0%, 100% { transform: scale(1); }
@@ -136,4 +150,36 @@ body {
 }
 .loopr-cta-link:hover .loopr-cta-arrow {
   transform: translateX(5px);
+}
+
+/* ProfileCard sizes itself height-first (80svh, capped at 540px) and derives
+   its width from aspect-ratio, so in a fixed-width column it renders WIDER
+   than the column and overlaps whatever sits beside it — measured at 388px in
+   a 320px column on /om-grundaren, covering 24px of the heading next to it.
+   Take the width from the column instead and let the ratio set the height.
+   The two-class selector also beats the component's own breakpoint rules. */
+.loopr-profile-card .pc-card {
+  width: 100%;
+  height: auto;
+  max-height: none;
+}
+
+/* The avatar ships as width:100% bottom-anchored with no object-fit, so its
+   height comes from the photo's own ratio: a 3:4 portrait renders 427px tall
+   in the 446px card and leaves a 20px band of the inner gradient above the
+   head. Fill the card instead and let cover do the cropping.
+
+   The overscan is not cosmetic. The card's parallax translates the image by
+   up to +-3px horizontally and scales it by +-1% (scaleY origin at the
+   bottom), so an image sized to exactly 100% exposes a sliver of gradient at
+   the edge on hover. 8px of extra height and the ~19px of horizontal excess
+   that cover leaves at this ratio both stay well clear of that.
+
+   Cropping stays off the face: at 320x446 the photo is scaled to 339x452, so
+   only ~9px is trimmed from each side (empty city skyline) and nothing from
+   top or bottom. */
+.loopr-profile-card .pc-avatar-content .avatar {
+  height: calc(100% + 8px);
+  object-fit: cover;
+  object-position: 50% 50%;
 }

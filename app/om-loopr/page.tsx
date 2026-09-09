@@ -30,9 +30,9 @@ import {
 // plain image rather than a link. Outbound links are mailto:, tel: and in-page
 // scroll anchors. SpecularButton's onClick must stay mailto-or-scroll only.
 //
-// The ONE sanctioned internal link is the pair /om-loopr <-> /varfor-loopr:
-// both are public presentation pages with no way into the product. Do not add
-// any other internal href.
+// The ONLY sanctioned internal links are between the public presentation pages
+// (/om-loopr, /varfor-loopr, /om-grundaren) — none of them has a way into the
+// product. Do not add any other internal href.
 
 // Threads takes normalised RGB, not a hex string: #A855F7 = 168/85/247.
 const BRICK_RGB: [number, number, number] = [168 / 255, 85 / 255, 247 / 255]
@@ -792,6 +792,55 @@ export default function OmLooprPage() {
           </FadeContent>
         </Section>
 
+        {/* ── 8. Founder teaser — the only prominent route to /om-grundaren.
+            The footer link alone was too easy to miss. Placed after the primary
+            CTA and styled deliberately quieter than it, so it reads as a trust
+            signal rather than a second competing action. The whole row is the
+            link, so the hit target is the card and not just the arrow. ────── */}
+        <FadeContent blur duration={1000} ease="power2.out" initialOpacity={0}>
+          <a
+            href="/om-grundaren"
+            className="loopr-cta-link"
+            style={{
+              display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap',
+              marginTop: 44, padding: '20px 24px', textDecoration: 'none',
+              border: '1px solid rgba(168,85,247,0.3)',
+              background: 'rgba(168,85,247,0.07)',
+              borderRadius: 20, cursor: 'pointer',
+            }}
+          >
+            <img
+              src="/samuel-mini.jpg"
+              alt="Samuel Hallson, grundare av Loopr"
+              width={64}
+              height={64}
+              style={{
+                width: 64, height: 64, borderRadius: '50%', objectFit: 'cover',
+                flexShrink: 0, border: '1px solid rgba(168,85,247,0.35)',
+              }}
+            />
+            <div style={{ flex: '1 1 240px', minWidth: 0 }}>
+              <p style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: '0.16em',
+                textTransform: 'uppercase', color: 'var(--brick)', margin: '0 0 7px',
+              }}>
+                Bakom Loopr
+              </p>
+              <p style={{
+                fontSize: 14.5, lineHeight: 1.6, margin: 0, color: 'rgba(255,255,255,0.72)',
+              }}>
+                Samuel Hallson, 18 år, byggde Loopr efter att ha sett hur ofta lokala
+                servicebolag missar samtal de omöjligt hinner svara på.
+              </p>
+            </div>
+            <span style={{
+              fontSize: 14.5, fontWeight: 700, color: 'var(--brick)', whiteSpace: 'nowrap',
+            }}>
+              Om grundaren <span className="loopr-cta-arrow">→</span>
+            </span>
+          </a>
+        </FadeContent>
+
         {/* ── Tech strip — a quiet trust signal, greyscale and low contrast ── */}
         <div style={{ marginTop: 72, textAlign: 'center' }}>
           <p style={{
@@ -840,6 +889,14 @@ export default function OmLooprPage() {
           >
             {CONTACT_EMAIL}
           </a>
+          <div style={{ display: 'flex', gap: 18, marginTop: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <a href="/varfor-loopr" style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', textDecoration: 'none' }}>
+              Affärsnyttan
+            </a>
+            <a href="/om-grundaren" style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', textDecoration: 'none' }}>
+              Om grundaren
+            </a>
+          </div>
         </footer>
       </div>
       </div>

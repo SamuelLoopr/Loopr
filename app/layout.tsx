@@ -10,7 +10,8 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="sv">
-      <body style={{ backgroundColor: 'var(--ink)', minHeight: '100vh', position: 'relative' }}>
+      {/* No inline style here — see the `body` rule in globals.css. */}
+      <body>
         {/* Animated background — fixed, behind everything */}
         <ColorBends
           color="#A855F7"
