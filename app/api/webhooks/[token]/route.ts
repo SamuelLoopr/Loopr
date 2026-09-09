@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServiceClient } from '@/lib/supabase-server'
 
 // Generic receiver for the per-agent webhook generated on the Calls tab.
 // Any system (Zapier, a custom integration, a test curl) can POST call data
@@ -7,10 +7,9 @@ import { createClient } from '@supabase/supabase-js'
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // No session here by definition (an external system is posting), so this uses
+  // the service client — service-role key when configured, anon key otherwise.
+  const supabase = createSupabaseServiceClient()
 
   const { data: agent, error: lookupErr } = await supabase
     .from('agents')

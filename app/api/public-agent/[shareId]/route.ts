@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServiceClient } from '@/lib/supabase-server'
 
 // Backs the public "prova agenten live" page (app/prova/[shareId]).
 //
@@ -17,11 +17,11 @@ const DEFAULT_WELCOME_SV = 'Hej! Hur kan jag hjälpa dig?'
 const DEFAULT_WELCOME_EN = 'Hello! How can I help you today?'
 const LANGUAGE_ENFORCEMENT_SV = 'VIKTIGT: Du ska ALLTID svara på svenska, oavsett vilket språk kunden använder. Använd aldrig engelska.\n\n'
 
+// Runs for callers with no session, so it uses the service client:
+// SUPABASE_SERVICE_ROLE_KEY when configured, otherwise the anon key it has
+// always used. See lib/supabase-server.ts.
 function supabaseClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  return createSupabaseServiceClient()
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ shareId: string }> }) {

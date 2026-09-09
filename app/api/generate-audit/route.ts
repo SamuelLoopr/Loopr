@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 
 async function scrapeUrl(url: string): Promise<string> {
   const controller = new AbortController()
@@ -117,10 +117,10 @@ Returnera ENBART giltig JSON (inga kommentarer, ingen markdown) i exakt detta sc
     content = { summary: rawText, visibility_score: 50, missed_calls_pct: 27, improvements: [] }
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Acts as the signed-in user rather than as anon: middleware.ts already
+  // guarantees a session on this route, and the authenticated-only RLS policies
+  // in 019_auth_rls.sql would reject these reads and writes from the anon role.
+  const supabase = await createSupabaseServerClient()
 
   const shareId = genShareId()
   const base = { business_name: businessName, website_url: fullUrl, share_id: shareId, status: 'completed', content }

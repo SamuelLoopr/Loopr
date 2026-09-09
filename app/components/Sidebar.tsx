@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import LooprLogo from './LooprLogo'
+import SignOutButton from './SignOutButton'
 
 interface NavItem {
   label: string
@@ -125,6 +126,10 @@ export default function Sidebar() {
           <span className="text-base leading-none">👤</span>
           <span>Profil</span>
         </Link>
+
+        <div className="mt-1">
+          <SignOutButton />
+        </div>
       </div>
     </aside>
   )

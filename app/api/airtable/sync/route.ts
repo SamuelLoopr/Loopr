@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.AIRTABLE_API_KEY
@@ -14,10 +14,10 @@ export async function POST(req: NextRequest) {
   const { agentId } = await req.json()
   if (!agentId) return NextResponse.json({ error: 'agentId krävs' }, { status: 400 })
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Acts as the signed-in user rather than as anon: middleware.ts already
+  // guarantees a session on this route, and the authenticated-only RLS policies
+  // in 019_auth_rls.sql would reject these reads and writes from the anon role.
+  const supabase = await createSupabaseServerClient()
 
   const { data: agent, error: agentErr } = await supabase
     .from('agents')

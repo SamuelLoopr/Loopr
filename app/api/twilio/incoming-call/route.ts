@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServiceClient } from '@/lib/supabase-server'
 
 // Twilio posts application/x-www-form-urlencoded to this URL when someone
 // dials a number purchased on the Phone tab. We look up which agent owns
@@ -38,10 +38,9 @@ export async function POST(req: NextRequest) {
 
   if (!to) return sayError('Kunde inte identifiera numret som ringdes.')
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // No session here by definition (an external system is posting), so this uses
+  // the service client — service-role key when configured, anon key otherwise.
+  const supabase = createSupabaseServiceClient()
 
   // Twilio numbers are stored in E.164 (+46...); match loosely on digits
   // in case formatting differs between what Twilio sends and what we stored.

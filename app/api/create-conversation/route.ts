@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 
 // Fallbacks used only when the agent's own field is empty in our database.
 // Previously an empty prompt_text/welcome_message meant we sent NO override
@@ -42,10 +42,10 @@ export async function POST(req: NextRequest) {
   }
 
   // Fetch agent prompt & welcome message from Supabase
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Acts as the signed-in user rather than as anon: middleware.ts already
+  // guarantees a session on this route, and the authenticated-only RLS policies
+  // in 019_auth_rls.sql would reject these reads and writes from the anon role.
+  const supabase = await createSupabaseServerClient()
   const { data: agent, error: dbError } = await supabase
     .from('agents')
     .select('prompt_text, welcome_message, language, voice_id')

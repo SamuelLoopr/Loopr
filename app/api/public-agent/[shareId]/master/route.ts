@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServiceClient } from '@/lib/supabase-server'
 
 // Backs the public Master Demo one-pager (app/master/[shareId]).
 //
@@ -13,11 +13,11 @@ import { createClient } from '@supabase/supabase-js'
 // and lead UUIDs, and the lead's phone/email never cross this boundary. The
 // live-call credentials stay in the POST handler of the parent route.
 
+// Runs for callers with no session, so it uses the service client:
+// SUPABASE_SERVICE_ROLE_KEY when configured, otherwise the anon key it has
+// always used. See lib/supabase-server.ts.
 function supabaseClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  return createSupabaseServiceClient()
 }
 
 interface AuditContent {

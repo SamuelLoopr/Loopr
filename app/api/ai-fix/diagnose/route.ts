@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 
 const EDITABLE_FIELDS = ['prompt_text', 'welcome_message', 'description', 'services', 'pain_points', 'goals'] as const
 
@@ -12,10 +12,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'agentId och problemDescription krävs' }, { status: 400 })
   }
 
-  const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  // Acts as the signed-in user rather than as anon: middleware.ts already
+  // guarantees a session on this route, and the authenticated-only RLS policies
+  // in 019_auth_rls.sql would reject these reads and writes from the anon role.
+  const supabase = await createSupabaseServerClient()
 
   const [{ data: agent, error: agentErr }, { data: calls }] = await Promise.all([
     supabase
