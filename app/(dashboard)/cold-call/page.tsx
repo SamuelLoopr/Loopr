@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Panel from '@/app/components/Panel'
 import { supabase } from '@/lib/supabase'
+import { LEAD_STATUS, COLD_CALL_EXCLUDED_STATUSES } from '@/lib/lead-status'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Lead {
@@ -83,7 +84,7 @@ export default function ColdCallPage() {
     supabase
       .from('leads')
       .select('id,name,business,phone,status,ai_score')
-      .not('status', 'in', '("Möte","Förlorad","booked")')
+      .not('status', 'in', `(${COLD_CALL_EXCLUDED_STATUSES.join(',')})`)
       .order('ai_score', { ascending: false, nullsFirst: false })
       .limit(100)
       .then(({ data }) => setLeads((data ?? []) as Lead[]))
@@ -106,7 +107,7 @@ export default function ColdCallPage() {
     setNotes('')
   }
 
-  function logOutcome(outcome: 'answered' | 'no_answer' | 'booked') {
+  async function logOutcome(outcome: 'answered' | 'no_answer' | 'booked') {
     const next: DayStats = {
       calls: stats.calls + 1,
       answered: (outcome === 'answered' || outcome === 'booked') ? stats.answered + 1 : stats.answered,
@@ -118,12 +119,15 @@ export default function ColdCallPage() {
     setSeconds(0)
 
     if (selected) {
+      // await, not fire-and-forget: a PostgrestBuilder only sends its request
+      // when it is awaited, so neither of these updates ever reached the
+      // database — which is why no capitalised status was ever stored.
       if (outcome === 'booked') {
-        supabase.from('leads').update({ status: 'Möte', notes }).eq('id', selected.id)
+        await supabase.from('leads').update({ status: LEAD_STATUS.MOTE, notes }).eq('id', selected.id)
         setLeads(prev => prev.filter(l => l.id !== selected.id))
       } else if (outcome === 'answered') {
-        supabase.from('leads').update({ status: 'Kontaktad', notes }).eq('id', selected.id)
-        setLeads(prev => prev.map(l => l.id === selected.id ? { ...l, status: 'Kontaktad' } : l))
+        await supabase.from('leads').update({ status: LEAD_STATUS.KONTAKTAD, notes }).eq('id', selected.id)
+        setLeads(prev => prev.map(l => l.id === selected.id ? { ...l, status: LEAD_STATUS.KONTAKTAD } : l))
       }
     }
     setSelected(null)

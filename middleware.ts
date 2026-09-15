@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { isAllowedEmail } from '@/lib/admin'
 
 // Session gate for the dashboard.
 //
@@ -43,6 +44,10 @@ const PROTECTED_PAGES = [
 //   /api/cal-com/*             reachable as ElevenLabs agent tools during a live
 //                              call, so a session check would break booking
 const PROTECTED_API = [
+  // Admin-only lookups used by otherwise-public pages. These must stay gated:
+  // /api/admin/agent-by-share resolves an agent's internal id, which the public
+  // master-demo payload deliberately never exposes.
+  '/api/admin',
   '/api/ai-fix',
   '/api/airtable',
   '/api/create-conversation',
@@ -56,22 +61,6 @@ const PROTECTED_API = [
   '/api/twilio/search-numbers',
   '/api/webhooks/generate',
 ]
-
-// Optional allow-list, second line of defence behind Supabase's own signup
-// setting. Comma-separated emails in DASHBOARD_ALLOWED_EMAILS; when unset, any
-// confirmed Supabase user may in. Set it and only those addresses get through,
-// so a stray self-registered account cannot reach the dashboard even if public
-// signups are ever switched back on.
-function isAllowed(email: string | undefined): boolean {
-  const raw = process.env.DASHBOARD_ALLOWED_EMAILS?.trim()
-  if (!raw) return true
-  const allowed = raw
-    .split(',')
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean)
-  if (allowed.length === 0) return true
-  return Boolean(email && allowed.includes(email.toLowerCase()))
-}
 
 /** Prefix match on whole path segments, so '/master-demo' never matches '/master/abc'. */
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
@@ -136,7 +125,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // Signed in, but not on the allow-list.
-  if (!isAllowed(user.email)) {
+  if (!isAllowedEmail(user.email)) {
     if (isProtectedApi) {
       return NextResponse.json({ error: 'Kontot saknar behörighet.' }, { status: 403 })
     }

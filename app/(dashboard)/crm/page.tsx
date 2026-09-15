@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import Panel from '../../components/Panel'
 import Dropdown from '../../components/Dropdown'
 import { supabase } from '@/lib/supabase'
+import { LEAD_STATUS, LEAD_STATUSES } from '@/lib/lead-status'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface CrmList { id: string; name: string; device_id: string }
@@ -25,15 +26,9 @@ interface Lead {
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const STATUSES = [
-  { value: 'new',          label: 'Ny',           color: 'var(--slate)' },
-  { value: 'att_kontakta', label: 'Att Kontakta', color: '#60a5fa' },
-  { value: 'kontaktad',    label: 'Kontaktad',    color: 'var(--gold)' },
-  { value: 'mote',         label: 'Möte',         color: 'var(--brick)' },
-  { value: 'forslag',      label: 'Förslag',      color: '#a78bfa' },
-  { value: 'vunnen',       label: 'Vunnen',       color: '#4ade80' },
-  { value: 'forlorad',     label: 'Förlorad',     color: '#ef4444' },
-]
+// These slugs moved to lib/lead-status.ts so the dashboard and Cold Call read
+// and write the same values instead of each keeping their own spelling.
+const STATUSES = LEAD_STATUSES
 
 const OWNER_STATUSES = [
   { value: '',               label: '—' },
@@ -119,7 +114,7 @@ function LeadRow({ lead, onUpdate }: {
       {/* Status */}
       <td className="px-3 py-2.5">
         <Dropdown
-          value={lead.status ?? 'new'}
+          value={lead.status ?? LEAD_STATUS.NEW}
           onChange={v => onUpdate(lead.id, { status: v })}
           options={STATUSES.map(s => ({ value: s.value, label: s.label }))}
           style={{ ...selectStyle, color: statusColor(lead.status) }}
@@ -273,7 +268,7 @@ export default function CrmPage() {
       phone: r.phone || null,
       email: r.email || null,
       website: r.website || null,
-      status: 'new',
+      status: LEAD_STATUS.NEW,
     }))
 
     const { error } = await supabase.from('leads').insert(toInsert)
@@ -516,8 +511,8 @@ export default function CrmPage() {
                 {filteredLeads.length} av {leads.length} leads visas
               </p>
               <p className="text-[10px]" style={{ color: 'var(--slate)' }}>
-                {leads.filter(l => l.status === 'vunnen').length} vunna ·{' '}
-                {leads.filter(l => l.status === 'forlorad').length} förlorade
+                {leads.filter(l => l.status === LEAD_STATUS.VUNNEN).length} vunna ·{' '}
+                {leads.filter(l => l.status === LEAD_STATUS.FORLORAD).length} förlorade
               </p>
             </div>
           )}

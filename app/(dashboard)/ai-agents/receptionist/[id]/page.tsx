@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams } from 'next/navigation'
+import { describeCallError, describeSdkError } from '@/lib/call-errors'
+import { normalizeE164, manualSidFor, isManualNumber } from '@/lib/phone'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Panel from '@/app/components/Panel'
 import Dropdown from '@/app/components/Dropdown'
@@ -17,6 +19,9 @@ interface Agent {
   language: string | null
   intelligence_tier: string | null
   voice_id: string | null
+  voice_stability: number | null
+  voice_similarity_boost: number | null
+  voice_speed: number | null
   prompt_text: string | null
   welcome_message: string | null
   transfer_number: string | null
@@ -156,6 +161,7 @@ function FieldTextarea({ label, value, onChange, placeholder, rows = 4, mono = f
 // ─── Agent Detail Page ────────────────────────────────────────────────────────
 export default function AgentDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const id = params?.id as string
 
   const [agent, setAgent] = useState<Agent | null>(null)
@@ -183,6 +189,12 @@ export default function AgentDetailPage() {
   const [settingsLanguage, setSettingsLanguage] = useState('sv')
   const [settingsTier, setSettingsTier] = useState('standard')
   const [settingsVoiceId, setSettingsVoiceId] = useState('')
+  // Voice tuning. Ranges are ElevenLabs'; model_id is deliberately absent —
+  // that field has override: false and can only be changed in their console.
+  const [voiceStability, setVoiceStability] = useState(0.5)
+  const [voiceSimilarity, setVoiceSimilarity] = useState(0.8)
+  const [voiceSpeed, setVoiceSpeed] = useState(1.0)
+  const [tuningApplied, setTuningApplied] = useState('')
   const [elevenLabsVoices, setElevenLabsVoices] = useState<ElevenLabsVoice[]>([])
   const [voicesLoading, setVoicesLoading] = useState(false)
   const [voicesError, setVoicesError] = useState('')
@@ -202,6 +214,13 @@ export default function AgentDetailPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
   const [phoneLoading, setPhoneLoading] = useState(false)
   const [areaCode, setAreaCode] = useState('')
+  // Manual add — for a number you already own, which the Twilio search can
+  // never surface because that endpoint only lists numbers available to buy.
+  const [cameFromMasterDemo, setCameFromMasterDemo] = useState(false)
+  const [manualNumber, setManualNumber] = useState('')
+  const [manualSaving, setManualSaving] = useState(false)
+  const [manualError, setManualError] = useState('')
+  const [manualOk, setManualOk] = useState('')
   const [searchResults, setSearchResults] = useState<{ phoneNumber: string; friendlyName: string; locality: string | null }[]>([])
   const [searching, setSearching] = useState(false)
   const [phoneError, setPhoneError] = useState('')
@@ -256,8 +275,12 @@ export default function AgentDetailPage() {
   // reading window.location during that first render still returns the old
   // page's query string.
   useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab')
+    const search = new URLSearchParams(window.location.search)
+    const requested = search.get('tab')
     if (requested && TABS.some(t => t.id === requested)) setActiveTab(requested)
+    // Set when arriving from the Master Demo builder or gallery, so the
+    // breadcrumb can offer a way straight back to that demo.
+    setCameFromMasterDemo(search.get('from') === 'master-demo')
   }, [])
 
   // ── Fetch agent ────────────────────────────────────────────────────────
@@ -287,6 +310,9 @@ export default function AgentDetailPage() {
         setSettingsLanguage(a.language ?? 'sv')
         setSettingsTier(a.intelligence_tier ?? 'standard')
         setSettingsVoiceId(a.voice_id ?? '')
+        if (a.voice_stability != null) setVoiceStability(Number(a.voice_stability))
+        if (a.voice_similarity_boost != null) setVoiceSimilarity(Number(a.voice_similarity_boost))
+        if (a.voice_speed != null) setVoiceSpeed(Number(a.voice_speed))
         // Calendar tab
         setCalEventTypeId(a.cal_com_event_type_id ?? '')
         // Proposal tab — prefill from Business fields, so it's not manual double-entry
@@ -456,12 +482,59 @@ export default function AgentDetailPage() {
     setSaving(true)
     setSaved(false)
     setSaveError('')
+    setTuningApplied('')
+
+    // Two writes on purpose. The voice_* columns arrive with migration 023; if
+    // they are not there yet, PostgREST rejects the whole statement, and a
+    // combined update would also lose the language/tier/voice choice. Core
+    // settings save first and always.
     const { error } = await supabase.from('agents').update({
       language: settingsLanguage,
       intelligence_tier: settingsTier,
       voice_id: settingsVoiceId || null,
     }).eq('id', id)
-    if (error) { setSaveError(error.message) } else { setSaved(true); setTimeout(() => setSaved(false), 2500) }
+
+    if (error) { setSaveError(error.message); setSaving(false); return }
+
+    const { error: tuningErr } = await supabase.from('agents').update({
+      voice_stability: voiceStability,
+      voice_similarity_boost: voiceSimilarity,
+      voice_speed: voiceSpeed,
+    }).eq('id', id)
+
+    if (tuningErr) {
+      setSaveError(
+        tuningErr.code === 'PGRST204'
+          ? 'Röstinställningarna kunde inte sparas — kör migration 023_agent_voice_settings.sql först. Övriga inställningar sparades.'
+          : `Röstinställningarna kunde inte sparas: ${tuningErr.message}`
+      )
+      setSaving(false)
+      return
+    }
+
+    // Push the tuning to ElevenLabs now so a Test-tab call right after saving
+    // uses it. The public demo re-applies these on every start anyway, since
+    // the ElevenLabs agent is shared and another demo may have changed them.
+    try {
+      const res = await fetch('/api/elevenlabs/voice-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stability: voiceStability, similarityBoost: voiceSimilarity, speed: voiceSpeed }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setSaveError(data.error || 'Inställningarna sparades men kunde inte tillämpas hos ElevenLabs.')
+      } else if (data.applied) {
+        setTuningApplied(
+          `ElevenLabs bekräftade: stabilitet ${data.applied.stability}, likhet ${data.applied.similarityBoost}, hastighet ${data.applied.speed}`
+        )
+      }
+    } catch {
+      setSaveError('Inställningarna sparades men ElevenLabs kunde inte nås.')
+    }
+
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
     setSaving(false)
   }
 
@@ -536,7 +609,64 @@ export default function AgentDetailPage() {
     setPurchasingNumber('')
   }
 
+  // ── Manual add ────────────────────────────────────────────────────────
+  // Writes straight to phone_numbers; Twilio is not involved at any point.
+  // The Twilio search/purchase flow above is untouched.
+  async function addManualNumber() {
+    setManualError('')
+    setManualOk('')
+
+    const parsed = normalizeE164(manualNumber)
+    if (!parsed.ok) { setManualError(parsed.error); return }
+
+    if (phoneNumbers.some(n => n.phone_number === parsed.e164)) {
+      setManualError('Numret är redan kopplat till den här agenten.')
+      return
+    }
+
+    setManualSaving(true)
+    const { data, error } = await supabase
+      .from('phone_numbers')
+      .insert({
+        agent_id: id,
+        phone_number: parsed.e164,
+        // twilio_sid is NOT NULL UNIQUE, and a number we did not buy has no real
+        // SID — see lib/phone.ts for why this stand-in is used.
+        twilio_sid: manualSidFor(parsed.e164),
+        friendly_name: 'Manuellt tillagt',
+      })
+      .select()
+      .single()
+    setManualSaving(false)
+
+    if (error || !data) {
+      // 23505 = unique violation: the number is already attached to some agent.
+      setManualError(
+        error?.code === '23505'
+          ? 'Numret finns redan i databasen, kopplat till en annan agent.'
+          : `Kunde inte spara numret: ${error?.message ?? 'okänt fel'}`
+      )
+      return
+    }
+
+    setPhoneNumbers(prev => [data as PhoneNumber, ...prev])
+    setManualNumber('')
+    setManualOk(`${parsed.e164} kopplat till agenten.`)
+  }
+
   async function releaseNumber(phoneNumberId: string, twilioSid: string) {
+    // A manually added number was never bought through Twilio, so asking Twilio
+    // to delete it would fail and leave the row stuck in the list forever.
+    // Remove it locally instead.
+    if (isManualNumber(twilioSid)) {
+      if (!confirm('Ta bort kopplingen till det här numret? Numret självt påverkas inte.')) return
+      setPhoneError('')
+      const { error } = await supabase.from('phone_numbers').delete().eq('id', phoneNumberId)
+      if (error) { setPhoneError(`Kunde inte ta bort: ${error.message}`); return }
+      setPhoneNumbers(prev => prev.filter(n => n.id !== phoneNumberId))
+      return
+    }
+
     if (!confirm('Släpp det här numret? Det slutar fungera omedelbart.')) return
     setPhoneError('')
     try {
@@ -695,6 +825,17 @@ export default function AgentDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId: id }),
       })
+
+      // middleware.ts answers 401 when the Supabase session has expired. Say so
+      // and send them to /login instead of surfacing a bare "401" — the call
+      // cannot succeed until they sign in again.
+      if (res.status === 401) {
+        setCallStatus('idle')
+        setCallError('Din session har gått ut. Loggar in på nytt…')
+        router.push(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`)
+        return
+      }
+
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Backend-anrop misslyckades')
 
@@ -735,11 +876,12 @@ export default function AgentDetailPage() {
           setCallStatus('idle')
           convRef.current = null
         },
-        onError: (msg: string) => {
-          setCallError(msg)
+        onError: (msg: unknown, context?: unknown) => {
+          const message = describeSdkError(msg, context)
+          setCallError(message)
           setCallStatus('idle')
           convRef.current = null
-          logCallError(msg)
+          logCallError(message)
         },
         onMessage: ({ message, source }: { message: string; source: 'user' | 'ai' }) => {
           setTranscript(prev => {
@@ -752,7 +894,9 @@ export default function AgentDetailPage() {
       })
       convRef.current = conv
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      // Was `String(err)`, which turned the SDK's CloseEvent rejection into the
+      // unreadable "[object CloseEvent]" — both on screen and in call_logs.
+      const message = describeCallError(err)
       setCallStatus('idle')
       setCallError(message)
       logCallError(message)
@@ -813,6 +957,18 @@ export default function AgentDetailPage() {
   return (
     <div className="space-y-5 pb-12">
 
+      {/* Back to the Master Demo that sent us here. Rendered only on that round
+          trip, so the normal breadcrumb is unchanged for everyone else. */}
+      {cameFromMasterDemo && (
+        <Link
+          href={`/master-demo/${id}`}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold"
+          style={{ color: 'var(--brick)', textDecoration: 'none' }}
+        >
+          ← Tillbaka till Master Demo
+        </Link>
+      )}
+
       {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--slate)' }}>
         <Link href="/ai-agents" className="hover:underline">AI Agenter</Link>
@@ -834,6 +990,25 @@ export default function AgentDetailPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Round-trip back to the shared demo, so tweaking and re-testing is
+              two clicks instead of a hunt through the gallery. Only rendered
+              when this agent actually has a public demo link. */}
+          {agent.public_share_id && (
+            <a
+              href={`/master/${agent.public_share_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all"
+              style={{
+                color: 'var(--slate)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                textDecoration: 'none',
+              }}
+              title="Öppna Master Demo i ny flik"
+            >
+              ↗ Till demon
+            </a>
+          )}
           <span className="text-xs font-semibold px-2.5 py-1.5 rounded-lg"
             style={{
               backgroundColor: isDeployed ? 'rgba(74,222,128,0.12)' : 'rgba(255,255,255,0.06)',
@@ -1268,6 +1443,86 @@ export default function AgentDetailPage() {
               )}
             </div>
           </div>
+          {/* ── Röstinställningar ──────────────────────────────────────── */}
+          <div className="pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+            <p className="text-xs font-semibold tracking-wide uppercase mb-1" style={{ color: 'var(--slate)' }}>
+              Röstinställningar
+            </p>
+            <p className="text-[11px] mb-4" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              Gäller Master Demo och alla röstdemos för den här agenten. Sparas här och
+              tillämpas hos ElevenLabs när demon startar.
+            </p>
+
+            <div className="space-y-4">
+              {([
+                {
+                  key: 'stability',
+                  label: 'Stabilitet',
+                  value: voiceStability,
+                  set: setVoiceStability,
+                  min: 0, max: 1, step: 0.05,
+                  left: 'Mer varierad',
+                  right: 'Mer stabil',
+                  help: 'Låg ger mer känsla och variation, hög ger en jämnare men plattare uppläsning.',
+                },
+                {
+                  key: 'similarity',
+                  label: 'Likhet',
+                  value: voiceSimilarity,
+                  set: setVoiceSimilarity,
+                  min: 0, max: 1, step: 0.05,
+                  left: 'Friare',
+                  right: 'Närmare originalet',
+                  help: 'Hur nära originalrösten uppläsningen håller sig.',
+                },
+                {
+                  key: 'speed',
+                  label: 'Talhastighet',
+                  value: voiceSpeed,
+                  set: setVoiceSpeed,
+                  min: 0.7, max: 1.2, step: 0.05,
+                  left: 'Långsammare',
+                  right: 'Snabbare',
+                  help: 'ElevenLabs tillåter 0,7–1,2. 1,0 är normal hastighet.',
+                },
+              ]).map(f => (
+                <div key={f.key}>
+                  <div className="flex items-baseline justify-between mb-1">
+                    <label htmlFor={`voice-${f.key}`} className="text-xs" style={{ color: 'var(--cream)' }}>{f.label}</label>
+                    <span className="text-xs font-semibold tabular-nums" style={{ color: 'var(--brick)' }}>
+                      {f.value.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    id={`voice-${f.key}`}
+                    type="range"
+                    min={f.min}
+                    max={f.max}
+                    step={f.step}
+                    value={f.value}
+                    onChange={e => f.set(Number(e.target.value))}
+                    className="w-full"
+                    style={{ accentColor: 'var(--brick)' }}
+                  />
+                  <div className="flex justify-between text-[10px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                    <span>{f.left}</span>
+                    <span>{f.right}</span>
+                  </div>
+                  <p className="text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.28)' }}>{f.help}</p>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-[10px] mt-4" style={{ color: 'rgba(255,255,255,0.28)' }}>
+              TTS-modellen ({'eleven_flash_v2_5'}) kan inte ändras härifrån — ElevenLabs tillåter
+              inte att den styrs per samtal, den sätts på agenten i deras konsol.
+            </p>
+
+            {tuningApplied && (
+              <p className="text-[11px] mt-2" style={{ color: '#4ade80' }}>✓ {tuningApplied}</p>
+            )}
+          </div>
+
           <SaveBar saving={saving} saved={saved} error={saveError} onSave={saveSettings} />
           <div className="pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
             <p className="text-xs font-semibold tracking-wide uppercase mb-2" style={{ color: '#ef4444' }}>Farlig zon</p>
@@ -1364,6 +1619,42 @@ export default function AgentDetailPage() {
             )}
           </Panel>
 
+          <Panel padding="p-5" enableTilt={false}>
+            <p className="text-xs font-semibold tracking-widest uppercase mb-1" style={{ color: 'var(--slate)' }}>
+              Lägg till befintligt nummer
+            </p>
+            <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
+              Har du redan ett nummer — köpt hos Twilio tidigare, på ett trial-konto, eller hos en annan
+              operatör — kopplar du det här. Sökningen ovan listar bara nya nummer som går att köpa i Sverige
+              och kan därför aldrig hitta ett du redan äger. Skriv med landskod, t.ex. +4915888623971.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={manualNumber}
+                onChange={e => { setManualNumber(e.target.value); setManualError(''); setManualOk('') }}
+                onKeyDown={e => { if (e.key === 'Enter' && !manualSaving) addManualNumber() }}
+                placeholder="+4915888623971"
+                style={{ ...inputStyle, flex: 1 }}
+              />
+              <button
+                onClick={addManualNumber}
+                disabled={manualSaving || !manualNumber.trim()}
+                className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+                style={{
+                  backgroundColor: 'rgba(168,85,247,0.2)',
+                  color: 'var(--brick)',
+                  border: '1px solid rgba(168,85,247,0.35)',
+                  cursor: manualSaving || !manualNumber.trim() ? 'default' : 'pointer',
+                  opacity: manualSaving || !manualNumber.trim() ? 0.5 : 1,
+                }}
+              >
+                {manualSaving ? 'Sparar…' : 'Koppla nummer'}
+              </button>
+            </div>
+            {manualError && <p className="text-xs mt-2" style={{ color: '#ef4444' }}>⚠️ {manualError}</p>}
+            {manualOk && <p className="text-xs mt-2" style={{ color: '#4ade80' }}>✓ {manualOk}</p>}
+          </Panel>
+
           <Panel padding="p-0" className="overflow-hidden" enableTilt={false}>
             <div className="px-5 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
               <p className="text-xs font-semibold tracking-widest uppercase" style={{ color: 'var(--slate)' }}>Kopplade nummer</p>
@@ -1371,21 +1662,24 @@ export default function AgentDetailPage() {
             {phoneLoading ? (
               <p className="p-5 text-sm" style={{ color: 'var(--slate)' }}>Laddar…</p>
             ) : phoneNumbers.length === 0 ? (
-              <p className="p-5 text-sm" style={{ color: 'var(--slate)' }}>Inga nummer köpta än — sök och köp ett ovan.</p>
+              <p className="p-5 text-sm" style={{ color: 'var(--slate)' }}>Inga nummer kopplade än — köp ett ovan, eller lägg till ett du redan äger.</p>
             ) : (
               <div>
                 {phoneNumbers.map(n => (
                   <div key={n.id} className="flex items-center justify-between px-5 py-3 border-b" style={{ borderColor: 'rgba(255,255,255,0.05)' }}>
                     <div>
                       <p style={{ color: 'var(--cream)' }}>{n.phone_number}</p>
-                      <p className="text-xs" style={{ color: 'var(--slate)' }}>Köpt {new Date(n.created_at).toLocaleDateString('sv-SE')}</p>
+                      <p className="text-xs" style={{ color: 'var(--slate)' }}>
+                        {isManualNumber(n.twilio_sid) ? 'Tillagt manuellt' : 'Köpt'}{' '}
+                        {new Date(n.created_at).toLocaleDateString('sv-SE')}
+                      </p>
                     </div>
                     <button
                       onClick={() => releaseNumber(n.id, n.twilio_sid)}
                       className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-colors hover:bg-white/5"
                       style={{ color: '#ef4444', border: '1px solid rgba(239,68,68,0.25)' }}
                     >
-                      Släpp
+                      {isManualNumber(n.twilio_sid) ? 'Ta bort' : 'Släpp'}
                     </button>
                   </div>
                 ))}

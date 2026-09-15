@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { describeAnthropicError } from '@/lib/upstream-errors'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
 
 const EDITABLE_FIELDS = ['prompt_text', 'welcome_message', 'description', 'services', 'pain_points', 'goals'] as const
@@ -79,7 +80,7 @@ Svara ENDAST med JSON i exakt detta format, ingen text före eller efter:
 
   if (!res.ok) {
     const err = await res.text()
-    return NextResponse.json({ error: `Claude API-fel: ${err}` }, { status: res.status })
+    return NextResponse.json({ error: describeAnthropicError(res.status, err) }, { status: res.status })
   }
 
   const data = await res.json()

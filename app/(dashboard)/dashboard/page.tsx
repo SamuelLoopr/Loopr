@@ -3,13 +3,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { LEAD_STATUS, LEAD_STATUSES } from '@/lib/lead-status'
 import Panel from '../../components/Panel'
 import Particles from '../../components/Particles'
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 const TODAY = new Date().toISOString().split('T')[0]
-const CALL_GOAL = 20
+const DEFAULT_CALL_GOAL = 20
 const DEFAULT_PROPOSAL_GOAL = 5
+
+/** sv-SE currency, no decimals — amounts here are whole kronor. */
+function kr(n: number): string {
+  return `${n.toLocaleString('sv-SE', { maximumFractionDigits: 0 })} kr`
+}
 
 const CHECKLIST_ITEMS = [
   { key: 'cold_calls', label: 'Gör dina dagliga cold calls' },
@@ -18,14 +24,9 @@ const CHECKLIST_ITEMS = [
   { key: 'send_proposals', label: 'Skicka förslag till varma leads' },
 ]
 
-const PIPELINE_STATUSES = [
-  { key: 'new', label: 'Ny' },
-  { key: 'contacted', label: 'Kontaktad' },
-  { key: 'meeting', label: 'Möte' },
-  { key: 'proposal', label: 'Förslag' },
-  { key: 'won', label: 'Vunnen' },
-  { key: 'lost', label: 'Förlorad' },
-]
+// Was a private list of English keys (contacted/meeting/proposal/won/lost) that
+// matched none of the slugs the CRM writes, so every step but "Ny" rendered 0.
+const PIPELINE_STATUSES = LEAD_STATUSES.map(({ value, label }) => ({ key: value, label }))
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Stats {
@@ -33,6 +34,10 @@ interface Stats {
   meetingLeads: number
   activeClients: number
   todayProposals: number
+  /** Sum of paid invoices, all time. */
+  grossRevenue: number
+  /** Sum of paid invoices flagged is_recurring — the only honest basis for MRR. */
+  mrr: number
   pipeline: Record<string, number>
 }
 
@@ -125,7 +130,7 @@ function formatMeetingTime(iso: string): string {
 export default function DashboardPage() {
   // ─ Data state
   const [displayName, setDisplayName] = useState<string>('')
-  const [stats, setStats] = useState<Stats>({ todayCalls: 0, meetingLeads: 0, activeClients: 0, todayProposals: 0, pipeline: {} })
+  const [stats, setStats] = useState<Stats>({ todayCalls: 0, meetingLeads: 0, activeClients: 0, todayProposals: 0, grossRevenue: 0, mrr: 0, pipeline: {} })
   const [agents, setAgents] = useState<Agent[]>([])
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [activity, setActivity] = useState<Activity[]>([])
@@ -133,6 +138,14 @@ export default function DashboardPage() {
   const [editingGoal, setEditingGoal] = useState(false)
   const [goalInput, setGoalInput] = useState('')
   const goalInputRef = useRef<HTMLInputElement>(null)
+
+  const [callGoal, setCallGoal] = useState<number>(DEFAULT_CALL_GOAL)
+  const [editingCallGoal, setEditingCallGoal] = useState(false)
+  const [callGoalInput, setCallGoalInput] = useState('')
+  const callGoalInputRef = useRef<HTMLInputElement>(null)
+
+  const [goalError, setGoalError] = useState('')
+  const [loadError, setLoadError] = useState('')
 
   // ─ Checklist state (stored in localStorage per date, synced to Supabase)
   const [checklist, setChecklist] = useState<Record<string, boolean>>({})
@@ -159,11 +172,12 @@ export default function DashboardPage() {
         meetingsRes,
         activityRes,
         checklistRes,
+        invoicesRes,
       ] = await Promise.all([
-        supabase.from('profile').select('display_name, daily_proposal_goal').maybeSingle(),
+        supabase.from('profile').select('*').maybeSingle(),
         supabase.from('call_logs').select('id', { count: 'exact', head: true })
           .gte('created_at', todayStart).lte('created_at', todayEnd),
-        supabase.from('leads').select('id', { count: 'exact', head: true }).eq('status', 'meeting'),
+        supabase.from('leads').select('id', { count: 'exact', head: true }).eq('status', LEAD_STATUS.MOTE),
         // active = review_clients + agents with status active
         supabase.from('review_clients').select('id', { count: 'exact', head: true }),
         supabase.from('proposals').select('id', { count: 'exact', head: true })
@@ -177,15 +191,32 @@ export default function DashboardPage() {
           .order('created_at', { ascending: false }).limit(5),
         supabase.from('daily_checklist').select('item_key, completed')
           .eq('user_id', deviceId.current).eq('date', TODAY),
+        // select('*') rather than naming is_recurring: the column arrives with
+        // migration 022, and naming a column that does not exist yet would make
+        // PostgREST reject the whole request and blank the dashboard.
+        supabase.from('invoices').select('*'),
       ])
 
-      // Profile
+      // Profile — both goals live here, not in localStorage.
       if (profileRes.data) {
-        setDisplayName(profileRes.data.display_name ?? '')
-        if (profileRes.data.daily_proposal_goal) {
-          setProposalGoal(profileRes.data.daily_proposal_goal)
-          setGoalInput(String(profileRes.data.daily_proposal_goal))
-        }
+        const p = profileRes.data as Record<string, unknown>
+        setDisplayName((p.display_name as string) ?? '')
+        const pg = p.daily_proposal_goal as number | null
+        if (pg) { setProposalGoal(pg); setGoalInput(String(pg)) }
+        const cg = p.daily_call_goal as number | null
+        if (cg) { setCallGoal(cg); setCallGoalInput(String(cg)) }
+      }
+
+      // Revenue. Bruttointäkt is every paid invoice; MRR is the paid ones that
+      // repeat. Both are 0 until invoices are actually marked paid — that is a
+      // real figure, not a placeholder.
+      let grossRevenue = 0
+      let mrr = 0
+      for (const inv of (invoicesRes.data ?? []) as Record<string, unknown>[]) {
+        if (inv.status !== 'paid') continue
+        const amount = Number(inv.amount) || 0
+        grossRevenue += amount
+        if (inv.is_recurring === true) mrr += amount
       }
 
       // Pipeline counts
@@ -199,6 +230,8 @@ export default function DashboardPage() {
         meetingLeads: meetingLeadsRes.count ?? 0,
         activeClients: activeClientsRes.count ?? 0,
         todayProposals: proposalsRes.count ?? 0,
+        grossRevenue,
+        mrr,
         pipeline,
       })
 
@@ -210,8 +243,9 @@ export default function DashboardPage() {
       const dbChecked: Record<string, boolean> = {}
       for (const row of checklistRes.data ?? []) dbChecked[row.item_key] = row.completed
       setChecklist(prev => ({ ...prev, ...dbChecked }))
-    } catch {
-      // Silent — show empty states
+    } catch (err) {
+      // Was silent, which made a failed load look like an empty account.
+      setLoadError(err instanceof Error ? err.message : 'Kunde inte hämta dashboard-data.')
     } finally {
       setLoading(false)
     }
@@ -235,10 +269,6 @@ export default function DashboardPage() {
     const lsData = localStorage.getItem(lsKey)
     if (lsData) setChecklist(JSON.parse(lsData))
 
-    // Proposal goal from localStorage
-    const lsGoal = localStorage.getItem('loopr_proposal_goal')
-    if (lsGoal) { setProposalGoal(Number(lsGoal)); setGoalInput(lsGoal) }
-
     fetchData()
   }, [fetchData])
 
@@ -256,18 +286,47 @@ export default function DashboardPage() {
   }, [checklist])
 
   // ─── Proposal goal save ──────────────────────────────────────────────────
+  /**
+   * Both goals persist on the signed-in user's profile row.
+   * user_id is always sent: the owner policies in 021_profile_fields.sql check
+   * it on insert, and it is harmless under the older blanket policy.
+   */
+  const saveGoals = useCallback(async (patch: { daily_proposal_goal?: number; daily_call_goal?: number }) => {
+    setGoalError('')
+    const { data: userData } = await supabase.auth.getUser()
+    const uid = userData.user?.id
+    if (!uid) { setGoalError('Ingen session — logga in igen.'); return }
+
+    const { error } = await supabase
+      .from('profile')
+      .upsert({ user_id: uid, ...patch }, { onConflict: 'user_id' })
+    if (error) setGoalError(`Målet kunde inte sparas: ${error.message}`)
+  }, [])
+
   const saveGoal = useCallback(async () => {
     const n = Math.max(1, parseInt(goalInput) || DEFAULT_PROPOSAL_GOAL)
     setProposalGoal(n)
+    setGoalInput(String(n))
     setEditingGoal(false)
-    localStorage.setItem('loopr_proposal_goal', String(n))
-    // TODO: save to profile.daily_proposal_goal when auth is wired
-  }, [goalInput])
+    await saveGoals({ daily_proposal_goal: n })
+  }, [goalInput, saveGoals])
+
+  const saveCallGoal = useCallback(async () => {
+    const n = Math.max(1, parseInt(callGoalInput) || DEFAULT_CALL_GOAL)
+    setCallGoal(n)
+    setCallGoalInput(String(n))
+    setEditingCallGoal(false)
+    await saveGoals({ daily_call_goal: n })
+  }, [callGoalInput, saveGoals])
 
   // Focus goal input when editing starts
   useEffect(() => {
     if (editingGoal) goalInputRef.current?.focus()
   }, [editingGoal])
+
+  useEffect(() => {
+    if (editingCallGoal) callGoalInputRef.current?.focus()
+  }, [editingCallGoal])
 
   // ─── Dismiss banner ──────────────────────────────────────────────────────
   const dismissBanner = () => {
@@ -295,7 +354,7 @@ export default function DashboardPage() {
   // ─── Derived values ───────────────────────────────────────────────────────
   const pipelineMax = Math.max(...Object.values(stats.pipeline), 1)
   const checklistDone = CHECKLIST_ITEMS.filter(i => checklist[i.key]).length
-  const callsLeft = Math.max(0, CALL_GOAL - stats.todayCalls)
+  const callsLeft = Math.max(0, callGoal - stats.todayCalls)
   const proposalsLeft = Math.max(0, proposalGoal - stats.todayProposals)
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -361,22 +420,27 @@ export default function DashboardPage() {
         </Panel>
       )}
 
+      {(loadError || goalError) && (
+        <Panel padding="px-5 py-3" magic={false}>
+          {loadError && <p className="text-sm" style={{ color: '#ef4444' }}>⚠️ {loadError}</p>}
+          {goalError && <p className="text-sm" style={{ color: '#fbbf24' }}>⚠️ {goalError}</p>}
+        </Panel>
+      )}
+
       {/* ── 3. SEX STATISTIKKORT ─────────────────────────────────────────── */}
       <div className="flex flex-wrap gap-3">
-        <StatCard label="Dagens Samtal" value={stats.todayCalls} goal={CALL_GOAL} />
+        <StatCard label="Dagens Samtal" value={stats.todayCalls} goal={callGoal} />
         <StatCard label="Möten" value={stats.meetingLeads} />
         <StatCard label="Aktiva Kunder" value={stats.activeClients} />
         <StatCard
           label="MRR"
-          value="0 kr"
-          // TODO: sum from payments table when billing integration is ready
-          sub="— koppling till betalningar kommer"
+          value={kr(stats.mrr)}
+          sub={stats.mrr === 0 ? 'Inga återkommande fakturor betalda' : 'Betalda återkommande fakturor'}
         />
         <StatCard
           label="Bruttointäkt"
-          value="0 kr"
-          // TODO: sum from payments/invoices table
-          sub="— koppling till betalningar kommer"
+          value={kr(stats.grossRevenue)}
+          sub={stats.grossRevenue === 0 ? 'Ingen faktura markerad betald än' : 'Alla betalda fakturor'}
         />
         <StatCard label="Skickade Förslag" value={stats.todayProposals} goal={proposalGoal} />
       </div>
@@ -390,17 +454,42 @@ export default function DashboardPage() {
               <p className="text-[10px] tracking-widest uppercase mb-1" style={{ color: 'var(--slate)' }}>
                 Dagligt Samtalsmål
               </p>
-              <p className="text-2xl font-bold" style={{ fontFamily: 'Arial, Helvetica, sans-serif', color: 'var(--cream)' }}>
-                {stats.todayCalls} / {CALL_GOAL}
-              </p>
+              <div className="flex items-baseline gap-2">
+                <p className="text-2xl font-bold" style={{ fontFamily: 'Arial, Helvetica, sans-serif', color: 'var(--cream)' }}>
+                  {stats.todayCalls} /
+                </p>
+                {editingCallGoal ? (
+                  <input
+                    ref={callGoalInputRef}
+                    type="number"
+                    min={1}
+                    value={callGoalInput}
+                    onChange={e => setCallGoalInput(e.target.value)}
+                    onBlur={saveCallGoal}
+                    onKeyDown={e => e.key === 'Enter' && saveCallGoal()}
+                    className="w-12 text-xl font-bold bg-transparent border-b outline-none text-center"
+                    style={{ color: 'var(--brick)', borderColor: 'var(--brick)' }}
+                    aria-label="Dagligt samtalsmål"
+                  />
+                ) : (
+                  <button
+                    onClick={() => { setEditingCallGoal(true); setCallGoalInput(String(callGoal)) }}
+                    className="text-2xl font-bold hover:opacity-70 transition-opacity underline decoration-dotted"
+                    style={{ fontFamily: 'Arial, Helvetica, sans-serif', color: 'var(--cream)', textDecorationColor: 'var(--slate)' }}
+                    title="Klicka för att redigera mål"
+                  >
+                    {callGoal}
+                  </button>
+                )}
+              </div>
             </div>
             <span className="text-2xl">📞</span>
           </div>
-          <ProgressBar value={stats.todayCalls} max={CALL_GOAL} />
+          <ProgressBar value={stats.todayCalls} max={callGoal} />
           <p className="text-xs" style={{ color: 'var(--slate)' }}>
             {callsLeft === 0
               ? '🎉 Mål uppnått idag!'
-              : `${callsLeft} fler samtal för att nå målet`}
+              : `${callsLeft} fler samtal — klicka på siffran för att ändra mål`}
           </p>
         </Panel>
 

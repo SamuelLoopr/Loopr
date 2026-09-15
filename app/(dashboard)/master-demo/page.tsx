@@ -269,6 +269,24 @@ export default function MasterDemoListPage() {
                   >
                     {r.shareId ? 'Redigera Master Demo →' : 'Bygg Master Demo →'}
                   </Link>
+
+                  {/* Skips the builder when it is the receptionist itself that
+                      needs changing — prompt, voice, phone. */}
+                  <Link
+                    href={`/ai-agents/receptionist/${r.agentId}?tab=settings&from=master-demo`}
+                    className="flex items-center justify-center gap-1.5 mt-2 rounded-lg transition-colors"
+                    style={{
+                      color: 'var(--slate)',
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      padding: '7px 0',
+                      fontSize: 12,
+                      textDecoration: 'none',
+                    }}
+                    title="Öppna receptionistens inställningar"
+                  >
+                    <span aria-hidden="true">⚙</span>
+                    Redigera receptionist
+                  </Link>
                 </div>
               </Panel>
             )

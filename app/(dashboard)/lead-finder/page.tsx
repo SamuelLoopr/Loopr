@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Panel from '../../components/Panel'
 import Dropdown from '../../components/Dropdown'
 import { supabase } from '@/lib/supabase'
+import { LEAD_STATUS } from '@/lib/lead-status'
 import type { LeadResult } from '@/app/api/search-leads/route'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -29,8 +30,13 @@ function scoreLabel(score: number): string {
 }
 
 // ─── Lead Card ────────────────────────────────────────────────────────────────
-function LeadCard({ lead, onAddCrm }: { lead: LeadResult; onAddCrm: (l: LeadResult) => Promise<string | null> }) {
-  const [added, setAdded] = useState(false)
+function LeadCard({ lead, onAddCrm, initiallyAdded = false }: {
+  lead: LeadResult
+  onAddCrm: (l: LeadResult) => Promise<string | null>
+  /** History rows already pushed to the CRM render as added, so they can't be duplicated. */
+  initiallyAdded?: boolean
+}) {
+  const [added, setAdded] = useState(initiallyAdded)
   const [adding, setAdding] = useState(false)
   const [addError, setAddError] = useState<string | null>(null)
 
@@ -146,6 +152,54 @@ function LeadCard({ lead, onAddCrm }: { lead: LeadResult; onAddCrm: (l: LeadResu
   )
 }
 
+// ─── Saved search history (migration 020) ─────────────────────────────────────
+
+interface SavedSearch {
+  id: string
+  industry: string | null
+  location: string | null
+  country: string | null
+  result_count: number
+  created_at: string
+}
+
+interface SavedResult {
+  id: string
+  business_name: string | null
+  address: string | null
+  phone: string | null
+  website: string | null
+  rating: number | null
+  review_count: number | null
+  ai_score: number | null
+  added_to_crm: boolean
+  place_id: string | null
+  ai_reason: string | null
+  maps_url: string | null
+}
+
+/** Saved row → the shape LeadCard already renders, so history reuses the same card. */
+function toLeadResult(r: SavedResult): LeadResult {
+  return {
+    place_id: r.place_id ?? r.id,
+    name: r.business_name ?? '(namn saknas)',
+    address: r.address ?? '',
+    phone: r.phone ?? '',
+    website: r.website ?? '',
+    rating: r.rating,
+    total_ratings: r.review_count ?? 0,
+    ai_score: r.ai_score ?? 0,
+    ai_reason: r.ai_reason ?? '',
+    maps_url: r.maps_url ?? '',
+  }
+}
+
+function formatSearchDate(iso: string): string {
+  return new Date(iso).toLocaleString('sv-SE', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  })
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 export default function LeadFinderPage() {
   // Source toggle
@@ -170,6 +224,17 @@ export default function LeadFinderPage() {
   const [searchDone, setSearchDone] = useState(false)
   const [mockWarning, setMockWarning] = useState('')
   const [error, setError] = useState('')
+
+  // Search history (migration 020). currentSearchId is the row this page's live
+  // results were saved under, so adding one to the CRM can flag it there too.
+  const [view, setView] = useState<'search' | 'history'>('search')
+  const [currentSearchId, setCurrentSearchId] = useState<string | null>(null)
+  const [searches, setSearches] = useState<SavedSearch[]>([])
+  const [searchesLoading, setSearchesLoading] = useState(false)
+  const [historyError, setHistoryError] = useState('')
+  const [openSearch, setOpenSearch] = useState<SavedSearch | null>(null)
+  const [openResults, setOpenResults] = useState<SavedResult[]>([])
+  const [openLoading, setOpenLoading] = useState(false)
 
   // ── Init ────────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -237,12 +302,17 @@ export default function LeadFinderPage() {
 
       if (!res.ok) { setError(data.error ?? 'Sökning misslyckades'); return }
 
-      setResults(data.results ?? [])
+      const found: LeadResult[] = data.results ?? []
+      setResults(found)
       setSearchDone(true)
       if (data.mock) setMockWarning(data.message)
 
       // Increment scrape usage
-      await incrementScrapeUsage(deviceId.current, data.results?.length ?? 0)
+      await incrementScrapeUsage(deviceId.current, found.length)
+
+      // Persist the whole result set, not just the ones pushed to the CRM.
+      // Mock results are skipped — they are demo filler, not real businesses.
+      if (!data.mock) await persistSearch(found)
     } catch {
       setError('Nätverksfel. Kontrollera att servern körs.')
     } finally {
@@ -250,8 +320,96 @@ export default function LeadFinderPage() {
     }
   }
 
+  // ── Persist search + results ────────────────────────────────────────────
+  // Deliberately non-fatal: a history write that fails must never cost the user
+  // the results they just paid quota for, so it warns instead of throwing.
+  async function persistSearch(found: LeadResult[]) {
+    const { data: search, error: searchErr } = await supabase
+      .from('lead_searches')
+      .insert({
+        industry: industry || null,
+        location: location || null,
+        country,
+        radius,
+        max_results: maxResults,
+        icp: icp || null,
+        result_count: found.length,
+        user_id: deviceId.current,
+      })
+      .select('id')
+      .single()
+
+    if (searchErr || !search) {
+      console.error('[Lead Finder] Kunde inte spara sökningen:', searchErr)
+      setHistoryError('Sökningen kunde inte sparas i historiken (resultaten nedan är oförändrade).')
+      return
+    }
+
+    setCurrentSearchId(search.id)
+
+    if (found.length === 0) return
+
+    const rows = found.map(r => ({
+      search_id: search.id,
+      business_name: r.name,
+      address: r.address,
+      phone: r.phone,
+      website: r.website,
+      rating: r.rating,
+      review_count: r.total_ratings,
+      ai_score: r.ai_score,
+      place_id: r.place_id,
+      ai_reason: r.ai_reason,
+      maps_url: r.maps_url,
+    }))
+
+    const { error: rowsErr } = await supabase.from('lead_search_results').insert(rows)
+    if (rowsErr) {
+      console.error('[Lead Finder] Kunde inte spara resultaten:', rowsErr)
+      setHistoryError('Sökningen sparades men resultaten kunde inte lagras.')
+    }
+  }
+
+  // ── History ─────────────────────────────────────────────────────────────
+  async function loadSearches() {
+    setSearchesLoading(true)
+    setHistoryError('')
+    const { data, error: e } = await supabase
+      .from('lead_searches')
+      .select('id, industry, location, country, result_count, created_at')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    if (e) setHistoryError(`Kunde inte hämta historiken: ${e.message}`)
+    setSearches((data ?? []) as SavedSearch[])
+    setSearchesLoading(false)
+  }
+
+  // Reads straight from lead_search_results — no Google call, so reopening an
+  // old search costs nothing against the monthly quota.
+  async function openHistorySearch(search: SavedSearch) {
+    setOpenSearch(search)
+    setOpenLoading(true)
+    setHistoryError('')
+    const { data, error: e } = await supabase
+      .from('lead_search_results')
+      .select('*')
+      .eq('search_id', search.id)
+      .order('ai_score', { ascending: false, nullsFirst: false })
+    if (e) setHistoryError(`Kunde inte hämta resultaten: ${e.message}`)
+    setOpenResults((data ?? []) as SavedResult[])
+    setOpenLoading(false)
+  }
+
+  function showHistory() {
+    setView('history')
+    setOpenSearch(null)
+    setOpenResults([])
+    loadSearches()
+  }
+
   // ── Add to CRM ──────────────────────────────────────────────────────────
-  async function handleAddCrm(lead: LeadResult): Promise<string | null> {
+  /** savedResultId is set when adding from the history view, so that row gets flagged. */
+  async function handleAddCrm(lead: LeadResult, savedResultId?: string): Promise<string | null> {
     const defaultListId = localStorage.getItem('loopr_default_list_id') || null
     if (!defaultListId) {
       return 'Skapa en CRM-lista först (gå till CRM → + Nytt CRM)'
@@ -265,13 +423,26 @@ export default function LeadFinderPage() {
       website: lead.website,
       source: 'lead_finder_google',
       ai_score: lead.ai_score,
-      status: 'new',
+      status: LEAD_STATUS.NEW,
       notes: lead.address + (lead.ai_reason ? `\n\nAI-analys: ${lead.ai_reason}` : ''),
     })
 
     if (error) {
       console.error('[Lead Finder] CRM insert failed:', error)
       return `Insert misslyckades: ${error.message}`
+    }
+
+    // Mark the saved row so the history view shows it as already in the CRM.
+    // From history we have the row id; from a live search we match on the
+    // search it belongs to plus the Google place id.
+    if (savedResultId) {
+      await supabase.from('lead_search_results').update({ added_to_crm: true }).eq('id', savedResultId)
+      setOpenResults(prev => prev.map(r => r.id === savedResultId ? { ...r, added_to_crm: true } : r))
+    } else if (currentSearchId) {
+      await supabase.from('lead_search_results')
+        .update({ added_to_crm: true })
+        .eq('search_id', currentSearchId)
+        .eq('place_id', lead.place_id)
     }
 
     // Fire-and-forget activity log (non-critical)
@@ -314,6 +485,33 @@ export default function LeadFinderPage() {
         </Panel>
       </div>
 
+      {/* ── Vy-växlare: ny sökning / historik ─────────────────────────────── */}
+      <div className="flex gap-2">
+        {([
+          { id: 'search'  as const, label: '🔍 Ny sökning' },
+          { id: 'history' as const, label: '🕘 Tidigare sökningar' },
+        ]).map(t => (
+          <button
+            key={t.id}
+            onClick={() => (t.id === 'history' ? showHistory() : setView('search'))}
+            className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+            style={{
+              backgroundColor: view === t.id ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.04)',
+              color: view === t.id ? 'var(--brick)' : 'var(--slate)',
+              border: `1px solid ${view === t.id ? 'rgba(168,85,247,0.35)' : 'rgba(255,255,255,0.08)'}`,
+              cursor: 'pointer',
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {historyError && (
+        <p className="text-xs px-1" style={{ color: '#fbbf24' }}>⚠️ {historyError}</p>
+      )}
+
+      {view === 'search' && (<>
       {/* ── Source toggle ─────────────────────────────────────────────────── */}
       <div className="flex gap-2">
         {(['google', 'indeed'] as const).map(s => (
@@ -542,6 +740,99 @@ export default function LeadFinderPage() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {results.map(lead => (
                 <LeadCard key={lead.place_id} lead={lead} onAddCrm={handleAddCrm} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      </>)}
+
+      {/* ── Tidigare sökningar ────────────────────────────────────────────── */}
+      {view === 'history' && !openSearch && (
+        <Panel padding="p-5" enableTilt={false}>
+          <h2 className="font-semibold mb-1" style={{ color: 'var(--cream)' }}>Tidigare sökningar</h2>
+          <p className="text-xs mb-4" style={{ color: 'var(--slate)' }}>
+            Öppna en sökning för att se alla resultat igen. Det kostar inget av månadskvoten.
+          </p>
+
+          {searchesLoading ? (
+            <p className="text-sm" style={{ color: 'var(--slate)' }}>Laddar…</p>
+          ) : searches.length === 0 ? (
+            <p className="text-sm" style={{ color: 'var(--slate)' }}>
+              Inga sparade sökningar ännu. Kör en sökning så hamnar den här automatiskt.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {searches.map(sr => (
+                <li key={sr.id}>
+                  <button
+                    onClick={() => openHistorySearch(sr)}
+                    className="w-full text-left px-4 py-3 rounded-lg transition-colors flex items-center justify-between gap-4"
+                    style={{
+                      backgroundColor: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.07)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold truncate" style={{ color: 'var(--cream)' }}>
+                        {[sr.industry, sr.location].filter(Boolean).join(' · ') || 'Sökning utan filter'}
+                      </p>
+                      <p className="text-[11px] mt-0.5" style={{ color: 'var(--slate)' }}>
+                        {formatSearchDate(sr.created_at)}
+                      </p>
+                    </div>
+                    <span
+                      className="shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full"
+                      style={{ backgroundColor: 'rgba(168,85,247,0.15)', color: 'var(--brick)' }}
+                    >
+                      {sr.result_count} träffar
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      )}
+
+      {/* ── En öppnad historik-sökning ────────────────────────────────────── */}
+      {view === 'history' && openSearch && (
+        <div className="space-y-4">
+          <Panel padding="p-4" enableTilt={false}>
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <button
+                  onClick={() => { setOpenSearch(null); setOpenResults([]) }}
+                  className="text-xs mb-1"
+                  style={{ color: 'var(--brick)', cursor: 'pointer', background: 'none', border: 'none', padding: 0 }}
+                >
+                  ← Alla sökningar
+                </button>
+                <p className="text-sm font-semibold truncate" style={{ color: 'var(--cream)' }}>
+                  {[openSearch.industry, openSearch.location].filter(Boolean).join(' · ') || 'Sökning utan filter'}
+                </p>
+                <p className="text-[11px] mt-0.5" style={{ color: 'var(--slate)' }}>
+                  {formatSearchDate(openSearch.created_at)} · {openSearch.result_count} träffar · sparad kopia, ingen ny sökning
+                </p>
+              </div>
+            </div>
+          </Panel>
+
+          {openLoading ? (
+            <p className="text-sm px-1" style={{ color: 'var(--slate)' }}>Laddar resultat…</p>
+          ) : openResults.length === 0 ? (
+            <p className="text-sm px-1" style={{ color: 'var(--slate)' }}>Inga sparade resultat för den här sökningen.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {openResults.map(r => (
+                <LeadCard
+                  key={r.id}
+                  lead={toLeadResult(r)}
+                  initiallyAdded={r.added_to_crm}
+                  onAddCrm={(l) => handleAddCrm(l, r.id)}
+                />
               ))}
             </div>
           )}

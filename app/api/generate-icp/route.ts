@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { describeAnthropicError } from '@/lib/upstream-errors'
 
 export async function POST(req: NextRequest) {
   const { industry, location } = await req.json()
@@ -40,7 +41,7 @@ Håll det konkret och handlingsbart. Max 300 ord.`
 
   if (!res.ok) {
     const err = await res.text()
-    return NextResponse.json({ error: err }, { status: res.status })
+    return NextResponse.json({ error: describeAnthropicError(res.status, err) }, { status: res.status })
   }
 
   const data = await res.json()

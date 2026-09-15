@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { describeAnthropicError } from '@/lib/upstream-errors'
 
 async function scrapeUrl(url: string): Promise<string> {
   const controller = new AbortController()
@@ -100,7 +101,7 @@ Samla alltid in: fullständigt namn, telefonnummer, adress/plats, typ av tjänst
 
   if (!res.ok) {
     const err = await res.text()
-    return NextResponse.json({ error: `Claude API-fel: ${err}` }, { status: res.status })
+    return NextResponse.json({ error: describeAnthropicError(res.status, err) }, { status: res.status })
   }
 
   const data = await res.json()

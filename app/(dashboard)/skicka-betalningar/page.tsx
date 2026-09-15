@@ -165,6 +165,8 @@ function SendInvoice({ agents, onSent }: { agents: Agent[]; onSent: (inv: Invoic
   const [clientName, setClientName] = useState('')
   const [amount, setAmount] = useState('')
   const [description, setDescription] = useState('')
+  // Drives the dashboard's MRR card — only recurring paid invoices count toward it.
+  const [isRecurring, setIsRecurring] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
@@ -181,6 +183,7 @@ function SendInvoice({ agents, onSent }: { agents: Agent[]; onSent: (inv: Invoic
         amount: Number(amount),
         description: description.trim() || null,
         status: 'sent',
+        is_recurring: isRecurring,
       })
       .select()
       .single()
@@ -194,6 +197,7 @@ function SendInvoice({ agents, onSent }: { agents: Agent[]; onSent: (inv: Invoic
       setAmount('')
       setDescription('')
       setAgentId('')
+      setIsRecurring(false)
     }, 2000)
   }
 
@@ -234,6 +238,20 @@ function SendInvoice({ agents, onSent }: { agents: Agent[]; onSent: (inv: Invoic
             onChange={e => setDescription(e.target.value)}
             placeholder="AI-receptionist — månadslicens"
           />
+        </div>
+        <div className="sm:col-span-2">
+          <label className="flex items-center gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={isRecurring}
+              onChange={e => setIsRecurring(e.target.checked)}
+              style={{ accentColor: 'var(--brick)', width: 16, height: 16, cursor: 'pointer' }}
+            />
+            <span className="text-sm" style={{ color: 'var(--cream)' }}>Återkommande månadsfaktura</span>
+          </label>
+          <p className="text-[11px] mt-1" style={{ color: 'rgba(255,255,255,0.35)' }}>
+            Räknas in i MRR på dashboarden när fakturan markerats som betald.
+          </p>
         </div>
       </div>
 

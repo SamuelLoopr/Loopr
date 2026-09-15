@@ -4,6 +4,7 @@ import { useState, useEffect, use, useRef } from 'react'
 import LooprLogo from '@/app/components/LooprLogo'
 import Panel from '@/app/components/Panel'
 import VoiceDemo from '@/app/components/VoiceDemo'
+import { supabase } from '@/lib/supabase'
 import SmsDemo, { type SmsDemoClient } from '@/app/components/SmsDemo'
 import BenefitCards from '@/app/components/BenefitCards'
 
@@ -106,6 +107,12 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
   const [notFound, setNotFound] = useState(false)
   const voiceRef = useRef<HTMLDivElement>(null)
 
+  // Admin shortcut. The id is not in the public payload by design, so it is
+  // fetched from a route that requires an admin session. A prospect's request
+  // comes back 401 and adminAgentId simply stays null — they never see the
+  // control and never learn the id.
+  const [adminAgentId, setAdminAgentId] = useState<string | null>(null)
+
   useEffect(() => {
     fetch(`/api/public-agent/${shareId}/master`)
       .then(res => res.json().then(body => ({ ok: res.ok, body })))
@@ -114,6 +121,28 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
         setData(body)
       })
       .catch(() => setNotFound(true))
+  }, [shareId])
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function checkAdmin() {
+      // Look for a session before calling the admin route at all. A prospect has
+      // none, so they make no request: no 401 in their console, and no hint that
+      // an admin endpoint exists behind this page. This is a courtesy check
+      // only — it is trivially spoofable, and the route enforces the real one.
+      const { data } = await supabase.auth.getUser()
+      if (cancelled || !data.user) return
+
+      const res = await fetch(`/api/admin/agent-by-share/${shareId}`)
+      if (cancelled || !res.ok) return
+
+      const body = await res.json()
+      if (!cancelled && body?.agentId) setAdminAgentId(body.agentId)
+    }
+
+    checkAdmin().catch(() => { /* not an admin, or offline — show nothing */ })
+    return () => { cancelled = true }
   }, [shareId])
 
   const pageStyle: React.CSSProperties = {
@@ -226,6 +255,31 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
             title="Ring upp och testa själv"
             blurb="Det här är en riktig AI-receptionist tränad på er verksamhet. Tryck på knappen och prata — den svarar som den skulle gjort för en kund."
           >
+            {adminAgentId && (
+              <div className="flex justify-end" style={{ marginBottom: 12 }}>
+                <a
+                  href={`/ai-agents/receptionist/${adminAgentId}?tab=settings`}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 7,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    padding: '7px 13px',
+                    borderRadius: 10,
+                    color: '#A855F7',
+                    backgroundColor: 'rgba(168,85,247,0.12)',
+                    border: '1px solid rgba(168,85,247,0.3)',
+                    textDecoration: 'none',
+                  }}
+                  title="Syns bara för inloggad admin"
+                >
+                  <span aria-hidden="true">⚙</span>
+                  Redigera agent
+                </a>
+              </div>
+            )}
+
             <VoiceDemo
               shareId={shareId}
               displayName={displayName}

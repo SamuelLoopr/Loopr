@@ -1,5 +1,7 @@
 'use client'
 
+import { describeCallError, describeSdkError } from '@/lib/call-errors'
+
 import { useState, useRef } from 'react'
 
 // The live ElevenLabs call panel — mic orb, status line, controls and the live
@@ -109,8 +111,8 @@ export default function VoiceDemo({
         },
         onConnect: () => setCallStatus('connected'),
         onDisconnect: () => { setCallStatus('idle'); convRef.current = null },
-        onError: (msg: string) => {
-          setCallError(msg)
+        onError: (msg: unknown, context?: unknown) => {
+          setCallError(describeSdkError(msg, context))
           setCallStatus('idle')
           convRef.current = null
         },
@@ -125,13 +127,11 @@ export default function VoiceDemo({
       })
       convRef.current = conv
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      // describeCallError already covers the microphone case and, crucially, the
+      // CloseEvent the SDK rejects with — String(err) on one of those is the
+      // useless "[object CloseEvent]" this used to show.
       setCallStatus('idle')
-      setCallError(
-        message.includes('Permission') || message.includes('denied')
-          ? 'Mikrofonen blockerades. Tillåt mikrofonåtkomst i webbläsaren och försök igen.'
-          : message
-      )
+      setCallError(describeCallError(err))
     }
   }
 

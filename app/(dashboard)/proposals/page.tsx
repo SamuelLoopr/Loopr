@@ -146,20 +146,23 @@ function EditAboutMeModal({
     setSaving(true)
     setError('')
     const payload = { display_name: displayName || null, bio: bio || null, phone: phone || null, business_name: businessName || null, tagline: tagline || null, avatar_url: avatarUrl || null }
-    let result: Profile | null = null
 
-    if (profile?.id) {
-      const { data, error: e } = await supabase.from('profile').update(payload).eq('id', profile.id).select().single()
-      if (e || !data) { setSaving(false); setError(e?.message ?? 'Fel'); return }
-      result = data
-    } else {
-      const { data, error: e } = await supabase.from('profile').insert(payload).select().single()
-      if (e || !data) { setSaving(false); setError(e?.message ?? 'Fel'); return }
-      localStorage.setItem('profile_id', data.id)
-      result = data
-    }
+    // One row per user, upserted on user_id — the same write the Profil page
+    // makes. user_id is required: the insert policy in 021_profile_fields.sql
+    // checks it, so the old payload without it would now be rejected outright.
+    const { data: userData } = await supabase.auth.getUser()
+    const uid = userData.user?.id
+    if (!uid) { setSaving(false); setError('Ingen session — logga in igen.'); return }
+
+    const { data, error: e } = await supabase
+      .from('profile')
+      .upsert({ user_id: uid, ...payload }, { onConflict: 'user_id' })
+      .select()
+      .single()
     setSaving(false)
-    if (result) onSaved(result)
+    if (e || !data) { setError(e?.message ?? 'Fel'); return }
+    localStorage.setItem('profile_id', data.id)
+    onSaved(data)
   }
 
   const fields = [
@@ -335,15 +338,16 @@ export default function ProposalsPage() {
     setProposals(propsData ?? [])
     setLeads(leadsData ?? [])
 
-    // Load profile — prefer localStorage id, fallback to anon profile
+    // Load profile for the signed-in user. Was keyed on a localStorage id with
+    // a `user_id is null` fallback, from before auth existed — owner-only RLS
+    // makes user_id the only lookup that can return a row now.
     try {
-      const profileId = localStorage.getItem('profile_id')
-      if (profileId) {
-        const { data: p } = await supabase.from('profile').select('*').eq('id', profileId).single()
-        if (p) { setProfile(p); setLoading(false); return }
+      const { data: userData } = await supabase.auth.getUser()
+      const uid = userData.user?.id
+      if (uid) {
+        const { data: p } = await supabase.from('profile').select('*').eq('user_id', uid).maybeSingle()
+        if (p) { setProfile(p); localStorage.setItem('profile_id', p.id) }
       }
-      const { data: p } = await supabase.from('profile').select('*').is('user_id', null).limit(1).maybeSingle()
-      if (p) { setProfile(p); localStorage.setItem('profile_id', p.id) }
     } catch { /* no profile yet */ }
     setLoading(false)
   }

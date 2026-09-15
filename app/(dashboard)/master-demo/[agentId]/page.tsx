@@ -369,9 +369,28 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
             <p className="text-[10px] font-semibold tracking-widest uppercase mb-1" style={{ color: 'var(--brick)' }}>
               Master Demo
             </p>
-            <h1 className="text-2xl font-bold" style={{ color: 'var(--cream)', fontFamily: 'Arial, Helvetica, sans-serif' }}>
-              {displayName}
-            </h1>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-bold" style={{ color: 'var(--cream)', fontFamily: 'Arial, Helvetica, sans-serif' }}>
+                {displayName}
+              </h1>
+              {/* Straight to this demo's receptionist. `from` lets that view
+                  offer a one-click way back to this exact builder, so the demo
+                  being edited is not lost on the round trip. */}
+              <Link
+                href={`/ai-agents/receptionist/${agentId}?tab=settings&from=master-demo`}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors"
+                style={{
+                  color: 'var(--brick)',
+                  backgroundColor: 'rgba(168,85,247,0.12)',
+                  border: '1px solid rgba(168,85,247,0.3)',
+                  textDecoration: 'none',
+                }}
+                title="Öppna receptionistens inställningar"
+              >
+                <span aria-hidden="true">⚙</span>
+                Redigera receptionist
+              </Link>
+            </div>
             <p className="text-xs mt-1" style={{ color: 'var(--slate)' }}>
               {visibleCount} av {SECTIONS.length} sektioner visas för prospekten
               {missing.length > 0 && ` · saknar ${missing.map(m => m.label).join(', ').toLowerCase()}`}
