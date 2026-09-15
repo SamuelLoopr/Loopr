@@ -30,11 +30,15 @@ function scoreLabel(score: number): string {
 }
 
 // ─── Lead Card ────────────────────────────────────────────────────────────────
-function LeadCard({ lead, onAddCrm, initiallyAdded = false }: {
+function LeadCard({ lead, onAddCrm, initiallyAdded = false, unscored = false, isManual = false, note }: {
   lead: LeadResult
   onAddCrm: (l: LeadResult) => Promise<string | null>
   /** History rows already pushed to the CRM render as added, so they can't be duplicated. */
   initiallyAdded?: boolean
+  /** Manual leads never went through Claude, so there is no score to show. */
+  unscored?: boolean
+  isManual?: boolean
+  note?: string | null
 }) {
   const [added, setAdded] = useState(initiallyAdded)
   const [adding, setAdding] = useState(false)
@@ -63,17 +67,41 @@ function LeadCard({ lead, onAddCrm, initiallyAdded = false }: {
             {lead.name}
           </h3>
           <p className="text-xs mt-0.5 truncate" style={{ color: 'var(--slate)' }}>{lead.address}</p>
+          {isManual && (
+            <span
+              className="inline-block mt-1 text-[9px] font-semibold px-1.5 py-0.5 rounded"
+              style={{
+                color: 'var(--gold)',
+                backgroundColor: 'rgba(201,162,75,0.12)',
+                border: '1px solid rgba(201,162,75,0.28)',
+              }}
+            >
+              ✋ Manuellt tillagd
+            </span>
+          )}
+          {note && (
+            <p className="text-[11px] mt-1.5 whitespace-pre-wrap" style={{ color: 'rgba(255,255,255,0.45)' }}>
+              {note}
+            </p>
+          )}
         </div>
-        {/* AI Score badge */}
+        {/* AI Score badge — or a plain marker when there is no score */}
         <div className="shrink-0 flex flex-col items-center">
           <div
             className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold"
-            style={{ border: `2px solid ${scoreColor(lead.ai_score)}`, color: scoreColor(lead.ai_score) }}
+            style={
+              unscored
+                ? { border: '2px dashed rgba(255,255,255,0.2)', color: 'var(--slate)', fontSize: 16 }
+                : { border: `2px solid ${scoreColor(lead.ai_score)}`, color: scoreColor(lead.ai_score) }
+            }
           >
-            {lead.ai_score}
+            {unscored ? '–' : lead.ai_score}
           </div>
-          <span className="text-[9px] mt-0.5" style={{ color: scoreColor(lead.ai_score) }}>
-            {scoreLabel(lead.ai_score)}
+          <span
+            className="text-[9px] mt-0.5 text-center leading-tight"
+            style={{ color: unscored ? 'var(--slate)' : scoreColor(lead.ai_score) }}
+          >
+            {unscored ? 'Ej poängsatt' : scoreLabel(lead.ai_score)}
           </span>
         </div>
       </div>
@@ -176,6 +204,8 @@ interface SavedResult {
   place_id: string | null
   ai_reason: string | null
   maps_url: string | null
+  source: string | null
+  notes: string | null
 }
 
 /** Saved row → the shape LeadCard already renders, so history reuses the same card. */
@@ -227,7 +257,19 @@ export default function LeadFinderPage() {
 
   // Search history (migration 020). currentSearchId is the row this page's live
   // results were saved under, so adding one to the CRM can flag it there too.
-  const [view, setView] = useState<'search' | 'history'>('search')
+  const [view, setView] = useState<'search' | 'history' | 'manual'>('search')
+
+  // Manual lead entry
+  const [showManualForm, setShowManualForm] = useState(false)
+  const [mBusiness, setMBusiness] = useState('')
+  const [mAddress, setMAddress] = useState('')
+  const [mPhone, setMPhone] = useState('')
+  const [mWebsite, setMWebsite] = useState('')
+  const [mNote, setMNote] = useState('')
+  const [mSaving, setMSaving] = useState(false)
+  const [mError, setMError] = useState('')
+  const [manualLeads, setManualLeads] = useState<SavedResult[]>([])
+  const [manualLoading, setManualLoading] = useState(false)
   const [currentSearchId, setCurrentSearchId] = useState<string | null>(null)
   const [searches, setSearches] = useState<SavedSearch[]>([])
   const [searchesLoading, setSearchesLoading] = useState(false)
@@ -407,9 +449,80 @@ export default function LeadFinderPage() {
     loadSearches()
   }
 
+  // ── Manual leads ────────────────────────────────────────────────────────
+  // Stored in lead_search_results with source='manual' and no search_id, so a
+  // hand-entered lead renders in the same card and reaches the CRM through the
+  // same button as a Google Places result. No Claude call: scoring works on a
+  // batch against an ICP description, and a single lead typed in by hand has
+  // neither — the card shows "Ej poängsatt" rather than an invented number.
+  async function saveManualLead() {
+    setMError('')
+    if (!mBusiness.trim()) { setMError('Företagsnamn krävs.'); return }
+
+    setMSaving(true)
+    const { data, error } = await supabase
+      .from('lead_search_results')
+      .insert({
+        search_id: null,
+        source: 'manual',
+        business_name: mBusiness.trim(),
+        address: mAddress.trim() || null,
+        phone: mPhone.trim() || null,
+        website: mWebsite.trim() || null,
+        notes: mNote.trim() || null,
+        ai_score: null,
+      })
+      .select()
+      .single()
+    setMSaving(false)
+
+    if (error || !data) {
+      setMError(
+        error?.code === 'PGRST204'
+          ? 'Kolumnerna saknas — kör migration 024_manual_leads.sql först.'
+          : `Kunde inte spara: ${error?.message ?? 'okänt fel'}`
+      )
+      return
+    }
+
+    setManualLeads(prev => [data as SavedResult, ...prev])
+    setMBusiness(''); setMAddress(''); setMPhone(''); setMWebsite(''); setMNote('')
+    setShowManualForm(false)
+    setView('manual')
+  }
+
+  async function loadManualLeads() {
+    setManualLoading(true)
+    setMError('')
+    const { data, error: e } = await supabase
+      .from('lead_search_results')
+      .select('*')
+      .eq('source', 'manual')
+      .order('created_at', { ascending: false })
+      .limit(200)
+    if (e) {
+      setMError(
+        e.code === '42703' || e.message.includes('source')
+          ? 'Kolumnen source saknas — kör migration 024_manual_leads.sql först.'
+          : `Kunde inte hämta egna leads: ${e.message}`
+      )
+    }
+    setManualLeads((data ?? []) as SavedResult[])
+    setManualLoading(false)
+  }
+
+  function showManual() {
+    setView('manual')
+    loadManualLeads()
+  }
+
   // ── Add to CRM ──────────────────────────────────────────────────────────
   /** savedResultId is set when adding from the history view, so that row gets flagged. */
-  async function handleAddCrm(lead: LeadResult, savedResultId?: string): Promise<string | null> {
+  async function handleAddCrm(
+    lead: LeadResult,
+    savedResultId?: string,
+    opts?: { manual?: boolean; note?: string | null }
+  ): Promise<string | null> {
     const defaultListId = localStorage.getItem('loopr_default_list_id') || null
     if (!defaultListId) {
       return 'Skapa en CRM-lista först (gå till CRM → + Nytt CRM)'
@@ -421,10 +534,14 @@ export default function LeadFinderPage() {
       business: lead.name,
       phone: lead.phone,
       website: lead.website,
-      source: 'lead_finder_google',
+      source: opts?.manual ? 'lead_finder_manual' : 'lead_finder_google',
       ai_score: lead.ai_score,
       status: LEAD_STATUS.NEW,
-      notes: lead.address + (lead.ai_reason ? `\n\nAI-analys: ${lead.ai_reason}` : ''),
+      notes: [
+        lead.address,
+        opts?.note ? `Anteckning: ${opts.note}` : '',
+        lead.ai_reason ? `AI-analys: ${lead.ai_reason}` : '',
+      ].filter(Boolean).join('\n\n'),
     })
 
     if (error) {
@@ -438,6 +555,7 @@ export default function LeadFinderPage() {
     if (savedResultId) {
       await supabase.from('lead_search_results').update({ added_to_crm: true }).eq('id', savedResultId)
       setOpenResults(prev => prev.map(r => r.id === savedResultId ? { ...r, added_to_crm: true } : r))
+      setManualLeads(prev => prev.map(r => r.id === savedResultId ? { ...r, added_to_crm: true } : r))
     } else if (currentSearchId) {
       await supabase.from('lead_search_results')
         .update({ added_to_crm: true })
@@ -490,10 +608,15 @@ export default function LeadFinderPage() {
         {([
           { id: 'search'  as const, label: '🔍 Ny sökning' },
           { id: 'history' as const, label: '🕘 Tidigare sökningar' },
+          { id: 'manual'  as const, label: '✋ Egna leads' },
         ]).map(t => (
           <button
             key={t.id}
-            onClick={() => (t.id === 'history' ? showHistory() : setView('search'))}
+            onClick={() => {
+              if (t.id === 'history') showHistory()
+              else if (t.id === 'manual') showManual()
+              else setView('search')
+            }}
             className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
             style={{
               backgroundColor: view === t.id ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.04)',
@@ -505,7 +628,90 @@ export default function LeadFinderPage() {
             {t.label}
           </button>
         ))}
+
+        <button
+          onClick={() => { setShowManualForm(v => !v); setMError('') }}
+          className="text-sm font-semibold px-4 py-2 rounded-lg transition-all ml-auto"
+          style={{
+            backgroundColor: showManualForm ? 'rgba(168,85,247,0.2)' : 'rgba(255,255,255,0.04)',
+            color: showManualForm ? 'var(--brick)' : 'var(--cream)',
+            border: `1px solid ${showManualForm ? 'rgba(168,85,247,0.35)' : 'rgba(255,255,255,0.12)'}`,
+            cursor: 'pointer',
+          }}
+        >
+          {showManualForm ? '✕ Stäng' : '+ Lägg till eget lead'}
+        </button>
       </div>
+
+      {/* ── Formulär för eget lead ────────────────────────────────────────── */}
+      {showManualForm && (
+        <Panel padding="p-5" enableTilt={false}>
+          <p className="text-sm font-semibold mb-1" style={{ color: 'var(--cream)' }}>Lägg till eget lead</p>
+          <p className="text-xs mb-4" style={{ color: 'rgba(255,255,255,0.4)' }}>
+            För företag du hittat på annat håll. Leadet hamnar under “Egna leads” och kan läggas
+            till i CRM precis som ett sökresultat. Det poängsätts inte av AI:n — poängsättningen
+            bygger på en hel sökning mot din ICP-beskrivning.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {([
+              { label: 'Företagsnamn *', value: mBusiness, set: setMBusiness, ph: 'Rörmokarna AB' },
+              { label: 'Telefonnummer',  value: mPhone,    set: setMPhone,    ph: '+46 70 123 45 67' },
+              { label: 'Adress',         value: mAddress,  set: setMAddress,  ph: 'Storgatan 1, Stockholm' },
+              { label: 'Hemsida',        value: mWebsite,  set: setMWebsite,  ph: 'https://…' },
+            ]).map(f => (
+              <div key={f.label}>
+                <label className="block text-xs mb-1" style={{ color: 'var(--slate)' }}>{f.label}</label>
+                <input
+                  value={f.value}
+                  onChange={e => { f.set(e.target.value); setMError('') }}
+                  placeholder={f.ph}
+                  style={{
+                    backgroundColor: 'rgba(255,255,255,0.05)',
+                    border: '1px solid rgba(255,255,255,0.1)',
+                    color: 'var(--cream)', borderRadius: 8, padding: '8px 12px',
+                    width: '100%', fontSize: 14, outline: 'none',
+                  }}
+                />
+              </div>
+            ))}
+            <div className="sm:col-span-2">
+              <label className="block text-xs mb-1" style={{ color: 'var(--slate)' }}>Anteckning</label>
+              <textarea
+                value={mNote}
+                onChange={e => setMNote(e.target.value)}
+                rows={2}
+                placeholder="Var kom leadet ifrån? Något att komma ihåg inför samtalet?"
+                style={{
+                  backgroundColor: 'rgba(255,255,255,0.05)',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--cream)', borderRadius: 8, padding: '8px 12px',
+                  width: '100%', fontSize: 14, outline: 'none', resize: 'vertical',
+                }}
+              />
+            </div>
+          </div>
+
+          {mError && <p className="text-xs mt-3" style={{ color: '#ef4444' }}>⚠️ {mError}</p>}
+
+          <div className="flex items-center gap-3 mt-4">
+            <button
+              onClick={saveManualLead}
+              disabled={mSaving || !mBusiness.trim()}
+              className="text-sm font-semibold px-4 py-2 rounded-lg transition-all"
+              style={{
+                backgroundColor: 'rgba(168,85,247,0.2)',
+                color: 'var(--brick)',
+                border: '1px solid rgba(168,85,247,0.35)',
+                cursor: mSaving || !mBusiness.trim() ? 'default' : 'pointer',
+                opacity: mSaving || !mBusiness.trim() ? 0.5 : 1,
+              }}
+            >
+              {mSaving ? 'Sparar…' : 'Spara lead'}
+            </button>
+          </div>
+        </Panel>
+      )}
 
       {historyError && (
         <p className="text-xs px-1" style={{ color: '#fbbf24' }}>⚠️ {historyError}</p>
@@ -748,6 +954,41 @@ export default function LeadFinderPage() {
 
       </>)}
 
+      {/* ── Egna leads ────────────────────────────────────────────────────── */}
+      {view === 'manual' && (
+        <div className="space-y-4">
+          <Panel padding="p-4" enableTilt={false}>
+            <p className="text-sm font-semibold" style={{ color: 'var(--cream)' }}>Egna leads</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--slate)' }}>
+              Leads du lagt till för hand. De fungerar som sökresultat — lägg dem i CRM så dyker
+              de upp i Cold Call och pipelinen.
+            </p>
+          </Panel>
+
+          {manualLoading ? (
+            <p className="text-sm px-1" style={{ color: 'var(--slate)' }}>Laddar…</p>
+          ) : manualLeads.length === 0 ? (
+            <p className="text-sm px-1" style={{ color: 'var(--slate)' }}>
+              Inga egna leads än — använd &ldquo;+ Lägg till eget lead&rdquo; ovan.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {manualLeads.map(r => (
+                <LeadCard
+                  key={r.id}
+                  lead={toLeadResult(r)}
+                  initiallyAdded={r.added_to_crm}
+                  unscored={r.ai_score == null}
+                  isManual
+                  note={r.notes}
+                  onAddCrm={(l) => handleAddCrm(l, r.id, { manual: true, note: r.notes })}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Tidigare sökningar ────────────────────────────────────────────── */}
       {view === 'history' && !openSearch && (
         <Panel padding="p-5" enableTilt={false}>
@@ -831,6 +1072,7 @@ export default function LeadFinderPage() {
                   key={r.id}
                   lead={toLeadResult(r)}
                   initiallyAdded={r.added_to_crm}
+                  unscored={r.ai_score == null}
                   onAddCrm={(l) => handleAddCrm(l, r.id)}
                 />
               ))}
