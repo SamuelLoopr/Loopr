@@ -1,6 +1,11 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAllowedEmail } from '@/lib/admin'
+import {
+  evaluateAccess,
+  trialEndsAtFromNow,
+  type BillingProfile,
+} from '@/lib/subscription'
 
 // Session gate for the dashboard.
 //
@@ -61,6 +66,13 @@ const PROTECTED_API = [
   '/api/twilio/search-numbers',
   '/api/webhooks/generate',
 ]
+
+// Protected, but exempt from the paywall. A blocked account still needs
+// somewhere to land that is not a dead end: /profile shows their details and
+// carries the sign-out button. /uppgradera is not listed here because it is not
+// in PROTECTED_PAGES at all — putting the paywall's own destination behind the
+// paywall would redirect it to itself.
+const PAYWALL_EXEMPT = ['/profile']
 
 /** Prefix match on whole path segments, so '/master-demo' never matches '/master/abc'. */
 function matchesPrefix(pathname: string, prefixes: string[]): boolean {
@@ -134,6 +146,56 @@ export async function middleware(request: NextRequest) {
     deniedUrl.search = ''
     deniedUrl.searchParams.set('denied', '1')
     return NextResponse.redirect(deniedUrl)
+  }
+
+  // ── Paywall ───────────────────────────────────────────────────────────────
+  // Third and last gate, after "is there a session" and "is this account
+  // allowed at all". Everything protected is behind it except /profile, which
+  // stays reachable so a blocked account can still see its details and sign
+  // out instead of being stuck with nowhere to go.
+  if (matchesPrefix(pathname, PAYWALL_EXEMPT)) {
+    return response
+  }
+
+  const { data: billing } = await supabase
+    .from('profile')
+    .select('subscription_status, trial_ends_at, billing_bypass')
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  let profile = billing as BillingProfile | null
+
+  // No row yet: this is a brand-new account, so start its trial rather than
+  // turning it away. Existing accounts were backfilled as 'active' by
+  // 025_subscription_paywall.sql, so this path only ever runs for genuine
+  // sign-ups. Failing to write is not fatal — evaluateAccess still sees the
+  // in-memory row and lets them in, and the next request retries the insert.
+  if (!profile) {
+    const fresh: BillingProfile = {
+      subscription_status: 'trialing',
+      trial_ends_at: trialEndsAtFromNow(),
+      billing_bypass: false,
+    }
+    await supabase.from('profile').insert({ user_id: user.id, ...fresh })
+    profile = fresh
+  }
+
+  const access = evaluateAccess(profile)
+
+  if (!access.allowed) {
+    if (isProtectedApi) {
+      return NextResponse.json(
+        { error: 'Kontot saknar aktiv prenumeration.', reason: access.reason },
+        { status: 402 }
+      )
+    }
+    const upgradeUrl = request.nextUrl.clone()
+    upgradeUrl.pathname = '/uppgradera'
+    upgradeUrl.search = ''
+    upgradeUrl.searchParams.set('reason', access.reason)
+    const redirect = NextResponse.redirect(upgradeUrl)
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie))
+    return redirect
   }
 
   return response
