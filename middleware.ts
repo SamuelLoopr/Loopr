@@ -79,14 +79,41 @@ function matchesPrefix(pathname: string, prefixes: string[]): boolean {
   return prefixes.some((p) => pathname === p || pathname.startsWith(p + '/'))
 }
 
+/**
+ * Is there a Supabase auth cookie at all?
+ *
+ * Purely a cost check, not a security one — the cookie's contents are never
+ * trusted. It exists so the landing page, which is mostly visited by anonymous
+ * traffic, does not pay for a getUser() round-trip on every hit. Anyone
+ * carrying a cookie gets the real validation below.
+ *
+ * @supabase/ssr names these `sb-<project-ref>-auth-token`, and chunks large
+ * ones as `.0`, `.1`, so the match is deliberately loose.
+ */
+function hasAuthCookie(request: NextRequest): boolean {
+  return request.cookies.getAll().some(
+    (c) => c.name.startsWith('sb-') && c.name.includes('auth-token')
+  )
+}
+
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isProtectedPage = matchesPrefix(pathname, PROTECTED_PAGES)
   const isProtectedApi = matchesPrefix(pathname, PROTECTED_API)
+  // The landing page is public, but a signed-in visitor should land in the
+  // dashboard rather than on the sales pitch. Handled here rather than in
+  // app/page.tsx so every session decision in the app stays in one file.
+  const isRoot = pathname === '/'
 
   // Public route: hand it straight through, untouched and unslowed.
-  if (!isProtectedPage && !isProtectedApi) {
+  if (!isProtectedPage && !isProtectedApi && !isRoot) {
+    return NextResponse.next()
+  }
+
+  // Anonymous visitor to the landing page: the common case, and it should cost
+  // nothing. Bail out before creating a client or calling Supabase.
+  if (isRoot && !hasAuthCookie(request)) {
     return NextResponse.next()
   }
 
@@ -115,6 +142,24 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser()
+
+  // Landing page with a real session → straight to the dashboard. A stale or
+  // invalid cookie leaves `user` null, and that visitor simply sees the landing
+  // page rather than being bounced to a login they did not ask for.
+  //
+  // No allow-list or paywall check here on purpose: /dashboard runs both a
+  // moment later, so bouncing off them is decided in exactly one place.
+  if (isRoot) {
+    if (user) {
+      const dash = request.nextUrl.clone()
+      dash.pathname = '/dashboard'
+      dash.search = ''
+      const redirect = NextResponse.redirect(dash)
+      response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie))
+      return redirect
+    }
+    return response
+  }
 
   if (!user) {
     if (isProtectedApi) {
