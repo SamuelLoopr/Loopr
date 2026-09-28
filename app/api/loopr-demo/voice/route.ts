@@ -36,6 +36,18 @@ Hitta aldrig på priser, kundnamn, kundantal eller resultatsiffror. Om du inte v
 
 const DEMO_WELCOME = 'Hej och välkommen till Loopr! Jag är Looprs AI-säljare — fråga mig vad du vill om hur det fungerar.'
 
+// "Saga - Content & Ads" — Swedish, female, already imported into the account.
+//
+// Sent as a per-conversation tts.voice_id override rather than changed on the
+// shared ElevenLabs agent. That agent backs every demo — /prova, /master, the
+// Test tab and inbound phone calls — so editing its voice would repaint all of
+// them. Overriding here changes this page and nothing else.
+//
+// This route previously returned an empty voiceId, which meant no override was
+// sent and the call inherited the agent's own voice: "Adam Composer", a male
+// voice. That is what the page used until now.
+const DEMO_VOICE_ID = 'tPrL2xYfkQnwJhHMMdRM'
+
 export async function POST() {
   const apiKey = process.env.ELEVENLABS_API_KEY
   const agentId = process.env.ELEVENLABS_AGENT_ID
@@ -62,6 +74,6 @@ export async function POST() {
     prompt: DEMO_PROMPT,
     welcomeMessage: DEMO_WELCOME,
     language: 'sv',
-    voiceId: '',
+    voiceId: DEMO_VOICE_ID,
   })
 }

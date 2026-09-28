@@ -39,6 +39,14 @@ interface Agent {
   created_at: string
 }
 
+interface OwnedNumber {
+  sid: string
+  phoneNumber: string
+  friendlyName: string
+  voiceUrl: string | null
+  voiceCapable: boolean
+}
+
 interface PhoneNumber {
   id: string
   phone_number: string
@@ -214,6 +222,15 @@ export default function AgentDetailPage() {
   const [phoneNumbers, setPhoneNumbers] = useState<PhoneNumber[]>([])
   const [phoneLoading, setPhoneLoading] = useState(false)
   const [areaCode, setAreaCode] = useState('')
+  // Country and number type are chosen, not hardcoded. SE/Local returns 404
+  // because Twilio has no Swedish Local voice inventory at all.
+  const [searchCountry, setSearchCountry] = useState('FI')
+  const [searchType, setSearchType] = useState('Mobile')
+  // Numbers already in the Twilio account, for attaching without buying.
+  const [ownedNumbers, setOwnedNumbers] = useState<OwnedNumber[]>([])
+  const [ownedLoading, setOwnedLoading] = useState(false)
+  const [ownedError, setOwnedError] = useState('')
+  const [attaching, setAttaching] = useState('')
   // Manual add — for a number you already own, which the Twilio search can
   // never surface because that endpoint only lists numbers available to buy.
   const [cameFromMasterDemo, setCameFromMasterDemo] = useState(false)
@@ -426,6 +443,7 @@ export default function AgentDetailPage() {
     if (activeTab === 'phone' && !phoneFetchedRef.current) {
       phoneFetchedRef.current = true
       loadPhoneNumbers()
+      loadOwnedNumbers()
     }
     if (activeTab === 'calls' && !callLogsFetchedRef.current) {
       callLogsFetchedRef.current = true
@@ -580,14 +598,68 @@ export default function AgentDetailPage() {
     setPhoneError('')
     setSearchResults([])
     try {
-      const res = await fetch(`/api/twilio/search-numbers?country=SE&areaCode=${encodeURIComponent(areaCode)}`)
+      const res = await fetch(
+        `/api/twilio/search-numbers?country=${encodeURIComponent(searchCountry)}` +
+        `&type=${encodeURIComponent(searchType)}&areaCode=${encodeURIComponent(areaCode)}`
+      )
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Okänt fel')
+      // A country/type with no inventory answers 200 with an explanation and an
+      // empty list, so both are surfaced rather than one hiding the other.
+      if (data.error) setPhoneError(data.error)
       setSearchResults(data.numbers ?? [])
     } catch (err) {
       setPhoneError(err instanceof Error ? err.message : String(err))
     }
     setSearching(false)
+  }
+
+  async function loadOwnedNumbers() {
+    setOwnedLoading(true)
+    setOwnedError('')
+    try {
+      const res = await fetch('/api/twilio/owned-numbers')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Okänt fel')
+      setOwnedNumbers(data.numbers ?? [])
+    } catch (err) {
+      setOwnedError(err instanceof Error ? err.message : String(err))
+    }
+    setOwnedLoading(false)
+  }
+
+  /** Attaches a number the account already owns to this agent — no Twilio purchase. */
+  async function attachOwnedNumber(n: OwnedNumber) {
+    setAttaching(n.sid)
+    setOwnedError('')
+
+    if (phoneNumbers.some(p => p.phone_number === n.phoneNumber)) {
+      setOwnedError('Numret är redan kopplat till den här agenten.')
+      setAttaching('')
+      return
+    }
+
+    const { data, error } = await supabase
+      .from('phone_numbers')
+      .insert({
+        agent_id: id,
+        phone_number: n.phoneNumber,
+        twilio_sid: n.sid,
+        friendly_name: n.friendlyName || 'Kopplat befintligt nummer',
+      })
+      .select()
+      .single()
+    setAttaching('')
+
+    if (error || !data) {
+      setOwnedError(
+        error?.code === '23505'
+          ? 'Numret finns redan i databasen, kopplat till en annan agent.'
+          : `Kunde inte koppla numret: ${error?.message ?? 'okänt fel'}`
+      )
+      return
+    }
+    setPhoneNumbers(prev => [data as PhoneNumber, ...prev])
   }
 
   async function purchaseNumber(phoneNumber: string) {
@@ -1578,14 +1650,101 @@ export default function AgentDetailPage() {
       {/* ── Phone tab (Twilio) ───────────────────────────────────────────── */}
       {activeTab === 'phone' && (
         <div className="space-y-4">
+          {/* ── Koppla ett nummer du redan äger ─────────────────────────── */}
+          <Panel padding="p-6" className="space-y-3" enableTilt={false}>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <p className="font-semibold" style={{ color: 'var(--cream)' }}>Koppla befintligt nummer</p>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--slate)' }}>
+                  Nummer som redan finns i ditt Twilio-konto. Sökningen nedan visar bara nummer att köpa.
+                </p>
+              </div>
+              <button
+                onClick={loadOwnedNumbers}
+                disabled={ownedLoading}
+                className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all disabled:opacity-40"
+                style={{ color: 'var(--slate)', border: '1px solid rgba(255,255,255,0.12)' }}
+              >
+                {ownedLoading ? '⟳ Hämtar…' : '↻ Uppdatera'}
+              </button>
+            </div>
+
+            {ownedError && <p className="text-sm" style={{ color: '#ef4444' }}>⚠️ {ownedError}</p>}
+
+            {ownedLoading ? (
+              <p className="text-sm" style={{ color: 'var(--slate)' }}>Hämtar dina nummer…</p>
+            ) : ownedNumbers.length === 0 ? (
+              <p className="text-sm" style={{ color: 'var(--slate)' }}>Inga nummer i Twilio-kontot.</p>
+            ) : (
+              <div className="space-y-2">
+                {ownedNumbers.map(n => {
+                  const already = phoneNumbers.some(p => p.phone_number === n.phoneNumber)
+                  return (
+                    <div
+                      key={n.sid}
+                      className="flex items-center justify-between gap-3 px-4 py-2.5 rounded-lg"
+                      style={{ backgroundColor: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm" style={{ color: 'var(--cream)' }}>{n.phoneNumber}</p>
+                        <p className="text-[11px]" style={{ color: 'var(--slate)' }}>
+                          {n.voiceCapable ? 'Röst stöds' : '⚠️ Saknar röststöd — tar inte emot samtal'}
+                          {n.voiceUrl ? ' · webhook satt' : ' · ingen webhook satt i Twilio'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => attachOwnedNumber(n)}
+                        disabled={already || attaching === n.sid}
+                        className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all disabled:opacity-40"
+                        style={{
+                          backgroundColor: already ? 'rgba(74,222,128,0.1)' : 'rgba(168,85,247,0.2)',
+                          color: already ? '#4ade80' : 'var(--brick)',
+                          border: `1px solid ${already ? 'rgba(74,222,128,0.3)' : 'rgba(168,85,247,0.3)'}`,
+                        }}
+                      >
+                        {already ? '✓ Kopplat' : attaching === n.sid ? '⟳' : 'Koppla'}
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </Panel>
+
           <Panel padding="p-6" className="space-y-4" enableTilt={false}>
-            <p className="font-semibold" style={{ color: 'var(--cream)' }}>Sök telefonnummer</p>
+            <p className="font-semibold" style={{ color: 'var(--cream)' }}>Sök och köp nytt nummer</p>
             <div className="flex gap-3 flex-wrap">
+              <select
+                value={searchCountry}
+                onChange={e => setSearchCountry(e.target.value)}
+                style={{ ...inputStyle, maxWidth: 150 }}
+                aria-label="Land"
+              >
+                {[
+                  { v: 'FI', l: '🇫🇮 Finland' },
+                  { v: 'SE', l: '🇸🇪 Sverige' },
+                  { v: 'NO', l: '🇳🇴 Norge' },
+                  { v: 'DK', l: '🇩🇰 Danmark' },
+                  { v: 'DE', l: '🇩🇪 Tyskland' },
+                  { v: 'GB', l: '🇬🇧 Storbritannien' },
+                  { v: 'US', l: '🇺🇸 USA' },
+                ].map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+              </select>
+              <select
+                value={searchType}
+                onChange={e => setSearchType(e.target.value)}
+                style={{ ...inputStyle, maxWidth: 150 }}
+                aria-label="Nummertyp"
+              >
+                <option value="Local">Local</option>
+                <option value="Mobile">Mobile</option>
+                <option value="TollFree">TollFree</option>
+              </select>
               <input
                 value={areaCode}
                 onChange={e => setAreaCode(e.target.value)}
-                placeholder="Riktnummer eller sökmönster, t.ex. 08"
-                style={{ ...inputStyle, maxWidth: 280 }}
+                placeholder="Riktnummer eller sökmönster"
+                style={{ ...inputStyle, maxWidth: 240 }}
               />
               <button
                 onClick={searchNumbers}

@@ -61,6 +61,7 @@ const PROTECTED_API = [
   '/api/generate-audit',
   '/api/generate-icp',
   '/api/search-leads',
+  '/api/twilio/owned-numbers',
   '/api/twilio/purchase-number',
   '/api/twilio/release-number',
   '/api/twilio/search-numbers',

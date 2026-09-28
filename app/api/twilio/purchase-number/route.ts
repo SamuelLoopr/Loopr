@@ -44,7 +44,24 @@ export async function POST(req: NextRequest) {
   const data = await res.json()
 
   if (!res.ok) {
-    return NextResponse.json({ error: data.message || `Twilio-fel (${res.status})` }, { status: res.status })
+    // Twilio's regulatory errors arrive as English prose with a code. The two
+    // below are what actually stops a Swedish buyer: most European voice
+    // numbers need a verified address and a Regulatory Bundle before purchase.
+    const code = String(data.code ?? '')
+    const raw = String(data.message ?? '')
+    let message = raw || `Twilio-fel (${res.status})`
+
+    if (code === '21649' || /regulatory|bundle/i.test(raw)) {
+      message =
+        'Numret kräver en godkänd Regulatory Bundle hos Twilio. Skapa den under Phone Numbers → Regulatory Compliance i Twilio-konsolen, vänta på godkännande, och försök sedan igen.'
+    } else if (code === '21631' || /address/i.test(raw)) {
+      message =
+        'Numret kräver en verifierad adress hos Twilio. Lägg till en adress under Phone Numbers → Verified Addresses i Twilio-konsolen och försök igen.'
+    } else if (code === '21422' || res.status === 404) {
+      message = 'Numret är inte längre tillgängligt. Sök igen och välj ett annat.'
+    }
+
+    return NextResponse.json({ error: message }, { status: res.status })
   }
 
   // Acts as the signed-in user rather than as anon: middleware.ts already
