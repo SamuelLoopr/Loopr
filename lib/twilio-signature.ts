@@ -30,16 +30,57 @@ import crypto from 'node:crypto'
  * The query string is included because Twilio signs the full URL.
  */
 export function publicWebhookUrl(req: Request, pathname: string, search = ''): string {
-  const pinned = process.env.TWILIO_WEBHOOK_URL?.trim()
-  if (pinned) return pinned
+  return webhookUrlCandidates(req, pathname, search)[0]
+}
+
+/** `https://www.x.se` ⇄ `https://x.se` — the same URL with the other host form. */
+function toggleWww(url: string): string | null {
+  try {
+    const u = new URL(url)
+    u.host = u.host.startsWith('www.') ? u.host.slice(4) : `www.${u.host}`
+    return u.toString().replace(/\/$/, '')
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Every URL this request might legitimately have been signed over.
+ *
+ * Twilio signs the URL **it was configured to call**, not the one the request
+ * finally lands on. When the configured host redirects — tryloopr.se → 308 →
+ * www.tryloopr.se on Vercel — Twilio follows the redirect but keeps the
+ * signature it computed for the original host. Validating against only one
+ * spelling then rejects every real call with 403, and the caller hears
+ * "your call could not be connected" with Twilio reporting Busy, 0 seconds.
+ *
+ * So both spellings of each candidate are accepted. This does not weaken the
+ * check: the auth token is still required, and an attacker gains nothing from
+ * us also accepting the www variant of our own domain.
+ *
+ * Order matters only for publicWebhookUrl()'s logging.
+ */
+export function webhookUrlCandidates(req: Request, pathname: string, search = ''): string[] {
+  const out: string[] = []
+  const add = (u: string | null | undefined) => {
+    if (!u) return
+    const clean = u.replace(/\/$/, '')
+    if (!out.includes(clean)) out.push(clean)
+    const flipped = toggleWww(clean)
+    if (flipped && !out.includes(flipped)) out.push(flipped)
+  }
+
+  add(process.env.TWILIO_WEBHOOK_URL?.trim())
 
   const base = process.env.APP_BASE_URL?.trim()
-  if (base) return `${base.replace(/\/$/, '')}${pathname}${search}`
+  if (base) add(`${base.replace(/\/$/, '')}${pathname}${search}`)
 
   const h = req.headers
   const proto = h.get('x-forwarded-proto') ?? 'https'
-  const host = h.get('x-forwarded-host') ?? h.get('host') ?? ''
-  return `${proto}://${host}${pathname}${search}`
+  const host = h.get('x-forwarded-host') ?? h.get('host')
+  if (host) add(`${proto}://${host}${pathname}${search}`)
+
+  return out.length > 0 ? out : ['']
 }
 
 /** Twilio's signature over a URL plus form parameters. Exported for testing. */
@@ -71,4 +112,18 @@ export function isValidTwilioSignature(
   if (a.length !== b.length) return false
 
   return crypto.timingSafeEqual(a, b)
+}
+
+/** Valid if the signature matches any candidate URL. Returns the one that matched. */
+export function matchTwilioSignature(
+  authToken: string,
+  urls: string[],
+  params: Record<string, string>,
+  header: string | null
+): string | null {
+  if (!header) return null
+  for (const url of urls) {
+    if (isValidTwilioSignature(authToken, url, params, header)) return url
+  }
+  return null
 }

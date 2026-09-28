@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
-import { isValidTwilioSignature, publicWebhookUrl } from '@/lib/twilio-signature'
+import { matchTwilioSignature, webhookUrlCandidates } from '@/lib/twilio-signature'
 import { normalizeE164 } from '@/lib/phone'
 
 // Twilio posts application/x-www-form-urlencoded here when someone dials a
@@ -70,9 +70,32 @@ export async function POST(req: NextRequest) {
       return sayError('Systemet är inte konfigurerat. Var god försök igen senare.')
     }
 
-    const url = publicWebhookUrl(req, '/api/twilio/incoming-call', req.nextUrl.search)
-    if (!isValidTwilioSignature(authToken, url, params, req.headers.get('x-twilio-signature'))) {
-      console.error(`[twilio/incoming-call] Ogiltig signatur för ${url}`)
+    // Client created before the signature check so a rejection can still be
+    // logged — a silent 403 is exactly what made the www/non-www redirect so
+    // hard to diagnose from the outside.
+    const supabase = createSupabaseServiceClient()
+
+    const logRejection = async (status: string, reason: string) => {
+      const { error } = await supabase.from('call_logs').insert({
+        agent_id: null,
+        from_number: params.From?.trim() ?? null,
+        to_number: params.To?.trim() ?? null,
+        status,
+        error_message: reason,
+      })
+      if (error) console.error('[twilio/incoming-call] call_logs-skrivning misslyckades:', error.message)
+    }
+
+    const candidates = webhookUrlCandidates(req, '/api/twilio/incoming-call', req.nextUrl.search)
+    const signature = req.headers.get('x-twilio-signature')
+    const matchedUrl = matchTwilioSignature(authToken, candidates, params, signature)
+
+    if (!matchedUrl) {
+      const reason = signature
+        ? `Signaturen matchade ingen av: ${candidates.join(', ')}`
+        : 'X-Twilio-Signature saknades helt'
+      console.error(`[twilio/incoming-call] Avvisat — ${reason}`)
+      await logRejection('rejected_signature', reason)
       // Not TwiML: a forged request gets no call flow, just a refusal.
       return new NextResponse('Forbidden', { status: 403 })
     }
@@ -85,9 +108,10 @@ export async function POST(req: NextRequest) {
     const from = params.From?.trim() ?? null
     const callSid = params.CallSid ?? null
 
-    if (!to) return sayError('Kunde inte identifiera numret som ringdes.')
-
-    const supabase = createSupabaseServiceClient()
+    if (!to) {
+      await logRejection('rejected_no_to', 'Twilio skickade ingen To-parameter')
+      return sayError('Kunde inte identifiera numret som ringdes.')
+    }
 
     // Log helper — every inbound call leaves a row, including the ones that
     // never reach an agent. Previously a call to an unregistered number
