@@ -161,7 +161,7 @@ export async function POST(req: NextRequest) {
     // ── Resolve the agent ─────────────────────────────────────────────────
     const { data: agent, error: agentErr } = await supabase
       .from('agents')
-      .select('id, name, status, prompt_text, welcome_message, language, voice_id')
+      .select('id, name, status, prompt_text, welcome_message, language, voice_id, voice_stability, voice_similarity_boost, voice_speed')
       .eq('id', agentId)
       .maybeSingle()
 
@@ -178,45 +178,97 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Hand off to ElevenLabs ────────────────────────────────────────────
-    const elRes = await fetch(
-      `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${encodeURIComponent(elAgentId)}`,
-      { headers: { 'xi-api-key': elApiKey } }
+    // POST /v1/convai/twilio/register-call — ElevenLabs' own Twilio path. It
+    // returns the TwiML to hand straight back to Twilio.
+    //
+    // This replaces <Connect><Stream url={get_signed_url}>, which was the
+    // browser SDK's conversation socket. Twilio Media Streams and that socket
+    // speak different protocols, so Twilio connected and immediately closed
+    // with error 31921 "Stream - WebSocket - Close Error" — calls showed as
+    // Completed with a 0-1 second duration.
+    //
+    // Shape verified against ElevenLabs' OpenAPI spec rather than guessed:
+    // required agent_id/from_number/to_number, optional direction and
+    // conversation_initiation_client_data.conversation_config_override, whose
+    // agent.{prompt.prompt,first_message,language} and tts.{voice_id,stability,
+    // speed,similarity_boost} carry what used to ride as <Parameter> children.
+    const language = agent.language === 'en' ? 'en' : 'sv'
+
+    const ttsOverride: Record<string, unknown> = {}
+    if (agent.voice_id) ttsOverride.voice_id = agent.voice_id
+    if (agent.voice_stability != null) ttsOverride.stability = Number(agent.voice_stability)
+    if (agent.voice_similarity_boost != null) ttsOverride.similarity_boost = Number(agent.voice_similarity_boost)
+    if (agent.voice_speed != null) ttsOverride.speed = Number(agent.voice_speed)
+
+    const agentOverride: Record<string, unknown> = { language }
+    if (agent.prompt_text) agentOverride.prompt = { prompt: agent.prompt_text }
+    if (agent.welcome_message) agentOverride.first_message = agent.welcome_message
+
+    const registerBody = {
+      agent_id: elAgentId,
+      from_number: from ?? '',
+      to_number: to,
+      direction: 'inbound',
+      conversation_initiation_client_data: {
+        conversation_config_override: {
+          agent: agentOverride,
+          ...(Object.keys(ttsOverride).length > 0 ? { tts: ttsOverride } : {}),
+        },
+      },
+    }
+
+    const elRes = await fetch('https://api.elevenlabs.io/v1/convai/twilio/register-call', {
+      method: 'POST',
+      headers: { 'xi-api-key': elApiKey, 'content-type': 'application/json' },
+      body: JSON.stringify(registerBody),
+    })
+
+    const elBody = await elRes.text().catch(() => '')
+
+    // Logged on every call, success or failure — the ElevenLabs status was the
+    // one thing the old route never recorded, which is why a working 200 from
+    // us still produced a dead call with nothing to look at afterwards.
+    console.log(
+      `[twilio/incoming-call] register-call ${elRes.status} agent=${agent.id} callSid=${callSid}`
     )
 
     if (!elRes.ok) {
-      const body = await elRes.text().catch(() => '')
-      await log('error', agent.id, `ElevenLabs get_signed_url misslyckades (${elRes.status}) ${body.slice(0, 160)}`)
+      await log(
+        'error',
+        agent.id,
+        `ElevenLabs register-call misslyckades (${elRes.status}): ${elBody.slice(0, 200)}`
+      )
       return sayError('Kunde inte ansluta till AI-agenten just nu.')
     }
 
-    const { signed_url: signedUrl } = await elRes.json()
-    if (!signedUrl) {
-      await log('error', agent.id, `ElevenLabs returnerade ingen signed_url (samtal ${callSid})`)
+    if (!elBody.trim().length) {
+      await log('error', agent.id, `ElevenLabs register-call gav tom TwiML (samtal ${callSid})`)
       return sayError('Kunde inte ansluta till AI-agenten just nu.')
     }
 
-    await log('in_progress', agent.id)
+    // ElevenLabs puts the conversation id in the TwiML itself, as
+    //   <Parameter name="conversation_id" value="conv_…" />
+    // on the <Stream>. Recorded so a call in our logs can be traced to the
+    // transcript on their side. Headers are checked first in case a future
+    // version moves it there.
+    const conversationId =
+      elRes.headers.get('x-conversation-id') ??
+      elRes.headers.get('conversation-id') ??
+      elBody.match(/name="conversation_id"\s+value="([^"]+)"/)?.[1] ??
+      null
 
-    // The agent's own prompt, greeting, language and voice travel as stream
-    // parameters. See the limitation note at the top of this file: they are
-    // sent correctly, but whether this ElevenLabs endpoint honours them is
-    // unverified.
-    const language = agent.language === 'en' ? 'en' : 'sv'
-    const parameters: Array<[string, string]> = [
-      ['language', language],
-      ['agent_name', agent.name ?? ''],
-    ]
-    if (agent.prompt_text) parameters.push(['prompt', agent.prompt_text])
-    if (agent.welcome_message) parameters.push(['first_message', agent.welcome_message])
-    if (agent.voice_id) parameters.push(['voice_id', agent.voice_id])
-
-    const paramXml = parameters
-      .map(([name, value]) => `<Parameter name="${xmlEscape(name)}" value="${xmlEscape(value)}" />`)
-      .join('')
-
-    return twiml(
-      `<Response><Connect><Stream url="${xmlEscape(signedUrl)}">${paramXml}</Stream></Connect></Response>`
+    await log(
+      'in_progress',
+      agent.id,
+      `ElevenLabs register-call 200${conversationId ? ` · conversation_id=${conversationId}` : ' · conversation_id saknas i svaret'}`
     )
+
+    // Returned verbatim: it is ElevenLabs' TwiML, and rewrapping it would risk
+    // breaking whatever verbs they chose.
+    return new NextResponse(elBody, {
+      status: 200,
+      headers: { 'Content-Type': 'text/xml' },
+    })
   } catch (err) {
     // Nothing above may reach the caller as a 500 — that produces Twilio's own
     // "application error" recording instead of our message.
