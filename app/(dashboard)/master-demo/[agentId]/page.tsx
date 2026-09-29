@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { copyText } from '@/lib/clipboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type SectionKey = 'voice' | 'sms' | 'audit' | 'proposal' | 'benefits'
+type SectionKey = 'calls' | 'voice' | 'sms' | 'audit' | 'proposal' | 'benefits'
 
 interface SectionDef {
   key: SectionKey
@@ -17,9 +17,12 @@ interface SectionDef {
   blurb: string
   /** Sections with no backing row — they can never be "missing data". */
   alwaysAvailable?: boolean
+  /** Data that arrives on its own (real calls) — nothing to create from here. */
+  external?: boolean
 }
 
 const SECTIONS: SectionDef[] = [
+  { key: 'calls',    icon: '📞', label: 'Samtal',              blurb: 'Kundens riktiga samtal med sammanfattning och transkript. Telefonnummer maskeras.', external: true },
   { key: 'voice',    icon: '🎙️', label: 'Röstdemo',            blurb: 'Prospekten ringer AI-receptionisten direkt i webbläsaren.' },
   { key: 'sms',      icon: '💬', label: 'SMS-recensionsflöde', blurb: 'Klickbar simulering av recensionsautomationen.' },
   { key: 'audit',    icon: '📊', label: 'Audit-höjdpunkter',   blurb: 'Synlighetspoäng och de största förbättringsmöjligheterna.' },
@@ -71,8 +74,10 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
   const [lead, setLead] = useState<Lead | null>(null)
   const [available, setAvailable] = useState<Available>({ sms: null, audit: null, proposal: null })
   const [enabled, setEnabled] = useState<Record<SectionKey, boolean>>({
-    voice: true, sms: true, audit: true, proposal: true, benefits: true,
+    calls: true, voice: true, sms: true, audit: true, proposal: true, benefits: true,
   })
+  // Whether the agent has taken real calls; the public page lists them.
+  const [hasCalls, setHasCalls] = useState(false)
   const [origin, setOrigin] = useState('')
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -126,6 +131,7 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
     const stored = agentRow.master_sections
     if (stored) {
       setEnabled(prev => ({
+        calls: stored.calls ?? prev.calls,
         voice: stored.voice ?? prev.voice,
         sms: stored.sms ?? prev.sms,
         audit: stored.audit ?? prev.audit,
@@ -134,7 +140,7 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
       }))
     }
 
-    const [leadRes, smsRes, auditRes, propRes] = await Promise.all([
+    const [leadRes, smsRes, auditRes, propRes, callsRes] = await Promise.all([
       agentRow.lead_id
         ? supabase.from('leads').select('business, website').eq('id', agentRow.lead_id).maybeSingle()
         : Promise.resolve({ data: null }),
@@ -144,7 +150,15 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
         .order('created_at', { ascending: false }).limit(1).maybeSingle(),
       supabase.from('proposals').select('share_id, title, avg_job_value').eq('agent_id', agentId)
         .order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      // Exactly what the public calls route can show: finished calls, plus live
+      // ones it can still complete from ElevenLabs. Bare in_progress rows without
+      // a conversation id (the pre-register-call handoff) can never finish and
+      // would make this say "Visas" for a section that stays empty.
+      supabase.from('call_logs').select('id', { count: 'exact', head: true }).eq('agent_id', agentId)
+        .or('status.eq.completed,and(status.eq.in_progress,error_message.like.*conversation_id=conv_*)'),
     ])
+
+    setHasCalls((callsRes.count ?? 0) > 0)
 
     setLead(leadRes.data)
     setAvailable({
@@ -291,6 +305,7 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
 
   function hasData(key: SectionKey): boolean {
     if (key === 'benefits') return true
+    if (key === 'calls') return hasCalls
     if (key === 'voice') return Boolean(agent?.public_share_id)
     return Boolean(available[key as 'sms' | 'audit' | 'proposal'])
   }
@@ -354,7 +369,7 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
   }
 
   const visibleCount = SECTIONS.filter(s => willShow(s.key)).length
-  const missing = SECTIONS.filter(s => !s.alwaysAvailable && !hasData(s.key))
+  const missing = SECTIONS.filter(s => !s.alwaysAvailable && !s.external && !hasData(s.key))
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -522,7 +537,9 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
                   color: shows ? '#4ade80' : 'var(--slate)',
                 }}
               >
-                {!data
+                {!data && s.external
+                  ? '○ Inga samtal ännu'
+                  : !data
                   ? '○ Ingen data kopplad — skapa den nedan'
                   : !on
                     ? '○ Avstängd — visas inte för prospekten'
@@ -536,6 +553,13 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
               </div>
 
               {/* ── Inline creation for whatever is missing ───────────── */}
+              {!data && s.key === 'calls' && (
+                <p className="text-[11px] leading-relaxed" style={{ color: 'var(--slate)' }}>
+                  Dyker upp på länken av sig själv när agenten har tagit sitt första riktiga samtal
+                  via sitt telefonnummer.
+                </p>
+              )}
+
               {!data && s.key === 'voice' && (
                 <button onClick={activateVoice} disabled={isBusy} style={{ ...brickBtn, width: '100%', opacity: isBusy ? 0.5 : 1 }}>
                   {isBusy ? '⟳ Aktiverar…' : '🎙 Aktivera röstdemo'}

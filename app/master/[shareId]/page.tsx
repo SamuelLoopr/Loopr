@@ -7,6 +7,8 @@ import VoiceDemo from '@/app/components/VoiceDemo'
 import { supabase } from '@/lib/supabase'
 import SmsDemo, { type SmsDemoClient } from '@/app/components/SmsDemo'
 import BenefitCards from '@/app/components/BenefitCards'
+import CallList from '@/app/components/CallList'
+import type { PublicCallsResponse } from '@/lib/public-calls'
 
 // ─── Types (mirror /api/public-agent/[shareId]/master) ────────────────────────
 interface MasterData {
@@ -113,6 +115,12 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
   // control and never learn the id.
   const [adminAgentId, setAdminAgentId] = useState<string | null>(null)
 
+  // The client's real calls. Fetched separately from the page payload because
+  // the route first brings newly finished calls in from ElevenLabs, which can
+  // take a few seconds — the rest of the page should not wait for that. Stays
+  // null (section hidden) on a prospect link with no calls, or on any error.
+  const [calls, setCalls] = useState<PublicCallsResponse | null>(null)
+
   useEffect(() => {
     fetch(`/api/public-agent/${shareId}/master`)
       .then(res => res.json().then(body => ({ ok: res.ok, body })))
@@ -121,6 +129,15 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
         setData(body)
       })
       .catch(() => setNotFound(true))
+  }, [shareId])
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`/api/public-agent/${shareId}/calls`)
+      .then(res => (res.ok ? res.json() : null))
+      .then((body: PublicCallsResponse | null) => { if (!cancelled && body) setCalls(body) })
+      .catch(() => { /* the section simply stays hidden */ })
+    return () => { cancelled = true }
   }, [shareId])
 
   useEffect(() => {
@@ -175,6 +192,7 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
   const { business, audit, sms, proposal } = data
   const showVoice = data.voice !== false
   const showBenefits = data.benefits !== false
+  const showCalls = Boolean(calls && (calls.calls.length > 0 || calls.processing > 0))
   const displayName = business.businessName || business.agentName
   const serviceList = (business.services ?? '').split('\n').map(s => s.trim()).filter(Boolean).slice(0, 5)
 
@@ -245,6 +263,18 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
           </>
           )}
         </header>
+
+        {/* ── Calls (only once the agent has taken real calls) ──────────── */}
+        {showCalls && calls && (
+          <Section
+            id="samtal"
+            eyebrow="Era samtal"
+            title="Samtal till er AI-receptionist"
+            blurb="Varje samtal som receptionisten har tagit, med en kort sammanfattning. Tryck på ett samtal för att läsa hela konversationen."
+          >
+            <CallList calls={calls.calls} processing={calls.processing} />
+          </Section>
+        )}
 
         {/* ── 2. Voice ──────────────────────────────────────────────────── */}
         {showVoice && (
