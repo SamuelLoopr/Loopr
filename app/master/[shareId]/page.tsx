@@ -9,9 +9,14 @@ import SmsDemo, { type SmsDemoClient } from '@/app/components/SmsDemo'
 import BenefitCards from '@/app/components/BenefitCards'
 import CallList from '@/app/components/CallList'
 import type { PublicCallsResponse } from '@/lib/public-calls'
+import Section from './Section'
+import ClientView, { type ClientPageData } from './ClientView'
 
 // ─── Types (mirror /api/public-agent/[shareId]/master) ────────────────────────
+// Two shapes: the sales demo below, and a client's BOS page (ClientView.tsx)
+// when the agent is in client mode. An older payload without `mode` is a demo.
 interface MasterData {
+  mode?: 'demo'
   business: {
     agentName: string
     businessName: string | null
@@ -66,46 +71,10 @@ function ScoreRing({ score }: { score: number }) {
   )
 }
 
-function Section({
-  eyebrow, title, blurb, children, id,
-}: {
-  eyebrow: string
-  title: string
-  blurb?: string
-  children: React.ReactNode
-  id?: string
-}) {
-  return (
-    <section id={id} style={{ marginTop: 64, scrollMarginTop: 24 }}>
-      <p style={{
-        fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase',
-        color: 'var(--brick)', marginBottom: 8, textAlign: 'center',
-      }}>
-        {eyebrow}
-      </p>
-      <h2 style={{
-        fontSize: 24, fontWeight: 700, textAlign: 'center', margin: 0,
-        fontFamily: 'Arial, Helvetica, sans-serif', lineHeight: 1.25, color: '#f6f3ee',
-      }}>
-        {title}
-      </h2>
-      {blurb && (
-        <p style={{
-          textAlign: 'center', color: 'rgba(255,255,255,0.5)', fontSize: 14,
-          lineHeight: 1.6, marginTop: 10, maxWidth: 520, marginLeft: 'auto', marginRight: 'auto',
-        }}>
-          {blurb}
-        </p>
-      )}
-      <div style={{ marginTop: 24 }}>{children}</div>
-    </section>
-  )
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function MasterDemoPage({ params }: { params: Promise<{ shareId: string }> }) {
   const { shareId } = use(params)
-  const [data, setData] = useState<MasterData | null>(null)
+  const [data, setData] = useState<MasterData | ClientPageData | null>(null)
   const [notFound, setNotFound] = useState(false)
   const voiceRef = useRef<HTMLDivElement>(null)
 
@@ -180,7 +149,7 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
       <div style={{ ...pageStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>🔌</div>
-          <p style={{ color: '#888' }}>Den här demolänken är inte längre aktiv.</p>
+          <p style={{ color: '#888' }}>Den här länken är inte längre aktiv.</p>
         </div>
       </div>
     )
@@ -189,9 +158,14 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
   if (!data) {
     return (
       <div style={{ ...pageStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <p style={{ color: '#555' }}>Laddar demo…</p>
+        <p style={{ color: '#555' }}>Laddar…</p>
       </div>
     )
+  }
+
+  // A paying client's page: calls, calendar and account — none of the demo below.
+  if (data.mode === 'client') {
+    return <ClientView shareId={shareId} data={data} calls={calls} />
   }
 
   const { business, audit, sms, proposal } = data

@@ -1,6 +1,10 @@
 'use client'
 
-import { useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import BookingForm from '@/app/components/BookingForm'
+import type { BookingsApi } from '@/app/components/useBookings'
+import { suggestBooking } from '@/lib/booking-suggestion'
+import { formatBookingWhen, toStockholm } from '@/lib/stockholm-time'
 import type { PublicCall, PublicCallUpdate, PublicContactRequest } from '@/lib/public-calls'
 import {
   CLIENT_NOTE_MAX,
@@ -80,11 +84,20 @@ export default function CallList({
   calls: initialCalls,
   processing,
   editable,
+  bookings,
+  onShowBooking,
+  focus,
 }: {
   shareId: string
   calls: PublicCall[]
   processing: number
   editable: boolean
+  /** The page's booking store — present only on a client's page (029, client mode). */
+  bookings?: BookingsApi
+  /** Jump the calendar to a day, from a card's "Bokat" line. */
+  onShowBooking?: (date: string) => void
+  /** Bring one call into view, from the calendar's "Visa samtalet". `n` makes repeats count. */
+  focus?: { ref: string; n: number } | null
 }) {
   const [calls, setCalls] = useState(initialCalls)
   const [view, setView] = useState<View>('status')
@@ -92,6 +105,26 @@ export default function CallList({
   const [showAll, setShowAll] = useState(false)
   const [announcement, setAnnouncement] = useState('')
   const announcementTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const [flashRef, setFlashRef] = useState<string | null>(null)
+
+  // "Visa samtalet" in the calendar: make sure the card is rendered — its group
+  // unfolded, or the full list shown — then scroll to it and mark it briefly.
+  useEffect(() => {
+    if (!focus) return
+    const call = calls.find(c => c.ref === focus.ref)
+    if (!call) return
+    const group = CRM_GROUPS.find(g => g.statuses.includes(call.status))
+    if (group) setCollapsed(prev => ({ ...prev, [group.key]: false }))
+    setShowAll(true)
+    setFlashRef(focus.ref)
+    const scroll = setTimeout(() => {
+      document.getElementById(`samtal-${focus.ref}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 60)
+    const clear = setTimeout(() => setFlashRef(null), 2400)
+    return () => { clearTimeout(scroll); clearTimeout(clear) }
+    // Keyed on focus alone: only a new request should move the view, not every
+    // status change that re-renders the list.
+  }, [focus])
 
   const save: Save = async (ref, update) => {
     const before = calls.find(c => c.ref === ref)
@@ -199,7 +232,8 @@ export default function CallList({
               ) : (
                 <ul style={listStyle}>
                   {groupCalls.map((call, i) => (
-                    <CallCard key={call.ref ?? `${group.key}${i}`} call={call} editable={editable} onSave={save} />
+                    <CallCard key={call.ref ?? `${group.key}${i}`} call={call} editable={editable} onSave={save}
+                      bookings={bookings} onShowBooking={onShowBooking} flash={flashRef === call.ref} />
                   ))}
                 </ul>
               ))}
@@ -210,7 +244,8 @@ export default function CallList({
         <>
           <ul style={listStyle}>
             {visibleAll.map((call, i) => (
-              <CallCard key={call.ref ?? `a${i}`} call={call} editable={editable} onSave={save} />
+              <CallCard key={call.ref ?? `a${i}`} call={call} editable={editable} onSave={save}
+                bookings={bookings} onShowBooking={onShowBooking} flash={flashRef === call.ref} />
             ))}
           </ul>
           {chronological.length > ALL_VIEW_PAGE && (
@@ -251,8 +286,18 @@ function CountPill({ count, accent = false }: { count: number; accent?: boolean 
   )
 }
 
-function CallCard({ call, editable, onSave }: { call: PublicCall; editable: boolean; onSave: Save }) {
+function CallCard({
+  call, editable, onSave, bookings, onShowBooking, flash = false,
+}: {
+  call: PublicCall
+  editable: boolean
+  onSave: Save
+  bookings?: BookingsApi
+  onShowBooking?: (date: string) => void
+  flash?: boolean
+}) {
   const [open, setOpen] = useState(false)
+  const [booking, setBooking] = useState(false)
   const [statusError, setStatusError] = useState('')
   const [savingStatus, setSavingStatus] = useState(false)
   const transcriptId = useId()
@@ -260,6 +305,12 @@ function CallCard({ call, editable, onSave }: { call: PublicCall; editable: bool
   const canEdit = editable && call.ref !== null
   // Purple = someone asked to be contacted and nobody has acted on it yet.
   const needsAction = Boolean(call.contactRequest) && call.status === 'ny'
+
+  // Bookings made from this call, from the page's shared store — so a booking
+  // moved or removed in the calendar is reflected here at once.
+  const canBook = Boolean(bookings) && canEdit
+  const linked = bookings?.bookings.filter(b => b.callRef === call.ref) ?? []
+  const nextBooking = linked.find(b => new Date(b.endsAt).getTime() > Date.now()) ?? linked[linked.length - 1]
 
   async function changeStatus(next: ClientStatus) {
     if (!call.ref || next === call.status) return
@@ -271,11 +322,13 @@ function CallCard({ call, editable, onSave }: { call: PublicCall; editable: bool
   }
 
   return (
-    <li style={{
+    <li id={call.ref ? `samtal-${call.ref}` : undefined} style={{
       borderRadius: 16,
       background: needsAction ? 'rgba(168,85,247,0.08)' : 'rgba(21,19,19,0.85)',
       border: `1px solid ${needsAction ? 'rgba(168,85,247,0.4)' : 'rgba(255,255,255,0.1)'}`,
-      overflow: 'hidden',
+      boxShadow: flash ? '0 0 0 2px #60a5fa' : 'none',
+      transition: 'box-shadow 0.4s ease',
+      overflow: 'hidden', scrollMarginTop: 24,
     }}>
       <div style={{ padding: '16px 18px' }}>
         <div style={{
@@ -328,6 +381,52 @@ function CallCard({ call, editable, onSave }: { call: PublicCall; editable: bool
 
         {canEdit && <NoteEditor call={call} onSave={onSave} />}
 
+        {canBook && nextBooking && !booking && (
+          <button
+            type="button"
+            onClick={() => onShowBooking?.(toStockholm(nextBooking.startsAt).date)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 12, padding: '6px 11px',
+              borderRadius: 9, cursor: 'pointer', fontSize: 12.5, fontWeight: 700,
+              color: '#bfdbfe', background: 'rgba(59,130,246,0.14)', border: '1px solid rgba(96,165,250,0.35)',
+            }}
+            title="Visa i kalendern"
+          >
+            <span aria-hidden="true">📅</span>
+            Bokat: {formatBookingWhen(nextBooking.startsAt)}
+            {linked.length > 1 && <span style={{ fontWeight: 500, opacity: 0.75 }}>(+{linked.length - 1})</span>}
+          </button>
+        )}
+
+        {canBook && booking && bookings && call.ref && (() => {
+          const s = suggestBooking({
+            startedAt: call.startedAt,
+            callerName: call.callerName,
+            contactRequest: call.contactRequest,
+            contactNote: call.contactNote,
+            summary: call.summary,
+          })
+          return (
+            <BookingForm
+              initial={{
+                title: s.title, date: s.date, time: s.time, durationMin: s.durationMin,
+                callerName: call.callerName ?? '', note: '',
+              }}
+              basis={s.basis}
+              submitLabel="Boka in"
+              markBookedOption={call.status !== 'bokad'}
+              onCancel={() => setBooking(false)}
+              onSubmit={async (values, { markBooked }) => {
+                const r = await bookings.create({ ...values, callRef: call.ref })
+                if (r.error) return r.error
+                setBooking(false)
+                if (markBooked && call.ref) await onSave(call.ref, { status: 'bokad' })
+                return null
+              }}
+            />
+          )
+        })()}
+
         {call.callbackNumber && (
           <a
             href={`tel:${call.callbackNumber}`}
@@ -353,6 +452,18 @@ function CallCard({ call, editable, onSave }: { call: PublicCall; editable: bool
           >
             {open ? 'Dölj samtalet ▴' : 'Läs hela samtalet ▾'}
           </button>
+          {canBook && !booking && (
+            <button
+              type="button"
+              onClick={() => setBooking(true)}
+              style={{
+                marginTop: 12, marginLeft: 16, padding: 0, background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 12.5, fontWeight: 700, color: '#93c5fd',
+              }}
+            >
+              {linked.length ? '+ Boka in igen' : '📅 Boka in'}
+            </button>
+          )}
         </div>
       </div>
 

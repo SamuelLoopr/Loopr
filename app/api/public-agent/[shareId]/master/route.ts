@@ -1,24 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
+import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
 
-// Backs the public Master Demo one-pager (app/master/[shareId]).
+// Backs the public page (app/master/[shareId]), which has two modes:
 //
-// It resolves the agent from the same public_share_id the voice demo uses, then
-// fans out to every artefact linked to that agent — audit, review-automation
-// client and proposal (linked via migrations 014/015) — and merges them into a
-// single payload.
+//   demo    — the Master Demo for a prospect. Resolves the agent, then fans out
+//             to every artefact linked to it (audit, review-automation client,
+//             proposal — migrations 014/015) and merges them into one payload.
+//   client  — the BOS page of a paying client (agents.client_mode, 029). Only
+//             what a client uses: their company, their account, and whether the
+//             calls section is on. No sales content is fetched or sent, so none
+//             can appear on the page even by mistake. Calls and bookings load
+//             from their own routes.
 //
-// Same rule as the /prova route: a prospect only ever receives display fields we
-// choose here. prompt_text, transfer_number, voice_id, webhook_token, the agent
-// and lead UUIDs, and the lead's phone/email never cross this boundary. The
-// live-call credentials stay in the POST handler of the parent route.
-
-// Runs for callers with no session, so it uses the service client:
-// SUPABASE_SERVICE_ROLE_KEY when configured, otherwise the anon key it has
-// always used. See lib/supabase-server.ts.
-function supabaseClient() {
-  return createSupabaseServiceClient()
-}
+// Same rule as the /prova route in both modes: a visitor only ever receives
+// display fields chosen here. prompt_text, transfer_number, voice_id,
+// webhook_token, the agent and lead UUIDs, and the lead's phone/email never
+// cross this boundary. The live-call credentials stay in the POST handler of the
+// parent route.
 
 interface AuditContent {
   summary?: string
@@ -28,36 +27,49 @@ interface AuditContent {
   improvements?: string[]
 }
 
+const DAY_MS = 86_400_000
+
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ shareId: string }> }) {
   const { shareId } = await params
-  const supabase = supabaseClient()
+  // Runs for callers with no session, so it uses the service client — see
+  // lib/supabase-server.ts.
+  const supabase = createSupabaseServiceClient()
 
-  const BASE_COLS = 'id, lead_id, name, business_name, industry, description, services, status'
-
-  // master_sections arrives with migration 017; fall back to the base columns so
-  // the page keeps working on a database that hasn't run it yet.
-  let { data: agent, error } = await supabase
-    .from('agents')
-    .select(`${BASE_COLS}, master_sections`)
-    .eq('public_share_id', shareId)
-    .single()
-
-  if (error && error.message.includes('master_sections')) {
-    ({ data: agent, error } = await supabase
-      .from('agents')
-      .select(BASE_COLS)
-      .eq('public_share_id', shareId)
-      .single())
+  const agent = await resolveShareAgent(supabase, shareId)
+  if (!agent) {
+    return NextResponse.json({ error: 'Länken hittades inte' }, { status: 404 })
   }
 
-  if (error || !agent) {
-    return NextResponse.json({ error: 'Demon hittades inte' }, { status: 404 })
+  // ── Client mode ─────────────────────────────────────────────────────────
+  if (agent.clientMode) {
+    const [phonesRes, recentRes] = await Promise.all([
+      supabase.from('phone_numbers').select('phone_number').eq('agent_id', agent.id),
+      supabase
+        .from('call_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('agent_id', agent.id)
+        .eq('status', 'completed')
+        .gte('created_at', new Date(Date.now() - 30 * DAY_MS).toISOString()),
+    ])
+
+    return NextResponse.json({
+      mode: 'client',
+      business: { agentName: agent.name, businessName: agent.businessName },
+      calls: sectionOn(agent, 'calls'),
+      account: {
+        receptionistActive: agent.status === 'deployed',
+        // The number the business's customers call — the client's own public
+        // number, not a caller's.
+        phoneNumbers: (phonesRes.data ?? []).map(p => p.phone_number as string).filter(Boolean),
+        callsLast30Days: recentRes.count ?? 0,
+      },
+    })
   }
 
-  // Null/missing means "show everything there is data for" — so links created
-  // before the builder existed keep rendering exactly as they did.
-  const sections = (agent as { master_sections?: Record<string, boolean> | null }).master_sections ?? null
-  const enabled = (key: string) => sections?.[key] !== false
+  // ── Demo mode ───────────────────────────────────────────────────────────
+  // Null/missing sections mean "show everything there is data for" — so links
+  // created before the builder existed keep rendering exactly as they did.
+  const enabled = (key: string) => sectionOn(agent, key)
 
   // Each section is optional — the page hides whatever comes back null rather
   // than rendering an empty shell, so a half-prepared prospect page still looks
@@ -90,9 +102,10 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
   const content: AuditContent = (auditRow?.content as AuditContent) ?? {}
 
   return NextResponse.json({
+    mode: 'demo',
     business: {
       agentName: agent.name,
-      businessName: agent.business_name,
+      businessName: agent.businessName,
       industry: agent.industry,
       description: agent.description,
       services: agent.services,

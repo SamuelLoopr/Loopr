@@ -21,6 +21,8 @@ interface Row {
   title: string
   subtitle: string
   shareId: string | null
+  /** agents.client_mode (029); null when the column does not exist yet. */
+  clientMode: boolean | null
   sectionsOn: number
   callsOn: boolean
   hasNumber: boolean
@@ -93,13 +95,17 @@ export default function BosListPage() {
         }[]
         const leadIds = agents.map(a => a.lead_id).filter(Boolean) as string[]
 
-        const [leadsRes, phonesRes, calls] = await Promise.all([
+        const [leadsRes, phonesRes, calls, modesRes] = await Promise.all([
           leadIds.length
             ? supabase.from('leads').select('id, name, business').in('id', leadIds)
             : Promise.resolve({ data: [] as { id: string; name: string | null; business: string | null }[] }),
           supabase.from('phone_numbers').select('agent_id'),
           loadCalls(),
+          supabase.from('agents').select('id, client_mode'),
         ])
+
+        const modesSupported = !(modesRes.error && isMissingColumn(modesRes.error))
+        const clientModeById = new Map((modesRes.data ?? []).map(m => [m.id as string, m.client_mode === true]))
 
         const leadById = new Map((leadsRes.data ?? []).map(l => [l.id, l]))
         const withNumber = new Set((phonesRes.data ?? []).map(p => p.agent_id))
@@ -117,6 +123,7 @@ export default function BosListPage() {
             title: a.business_name || lead?.business || a.name,
             subtitle: [lead?.name, a.name].filter(Boolean).join(' · '),
             shareId: a.public_share_id,
+            clientMode: modesSupported ? clientModeById.get(a.id) ?? false : null,
             sectionsOn: SECTIONS.filter(s => flags[s.key]).length,
             callsOn: flags.calls,
             hasNumber: withNumber.has(a.id),
@@ -233,6 +240,16 @@ export default function BosListPage() {
               </div>
 
               <div className="flex flex-wrap gap-1.5 mb-3">
+                {r.clientMode !== null && (
+                  <span
+                    className="text-[10px] font-semibold px-2 py-1 rounded-md"
+                    style={r.clientMode
+                      ? { backgroundColor: 'rgba(59,130,246,0.15)', color: '#93c5fd', border: '1px solid rgba(96,165,250,0.35)' }
+                      : { backgroundColor: 'rgba(255,255,255,0.04)', color: 'var(--slate)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  >
+                    {r.clientMode ? 'Klientläge' : 'Säljdemo'}
+                  </span>
+                )}
                 <Chip ok={Boolean(r.shareId)} label={r.shareId ? 'Länk aktiv' : 'Ingen länk'} />
                 <Chip ok={r.hasNumber} label={r.hasNumber ? 'Nummer kopplat' : 'Inget nummer'} />
                 <Chip ok={r.callsOn} label={r.callsOn ? 'Samtal visas' : 'Samtal avstängt'} />

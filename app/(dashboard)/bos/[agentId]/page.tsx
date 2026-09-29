@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, use } from 'react'
 import Link from 'next/link'
 import Panel from '@/app/components/Panel'
 import ToggleSwitch from '@/app/components/ToggleSwitch'
+import ModeSwitch, { loadClientMode } from '@/app/components/ModeSwitch'
 import { supabase } from '@/lib/supabase'
 import { copyText } from '@/lib/clipboard'
 import { isMissingColumn } from '@/lib/db-errors'
@@ -46,6 +47,8 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
   const [hasNumber, setHasNumber] = useState(false)
   const [byGroup, setByGroup] = useState<Record<string, number> | null>(null)
   const [statusTracked, setStatusTracked] = useState(true)
+  // agents.client_mode (029): null when the column does not exist yet.
+  const [clientMode, setClientMode] = useState<boolean | null>(false)
 
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -122,6 +125,7 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
       setByGroup(Object.fromEntries(CRM_GROUPS.map(g => [g.key, statuses.filter(s => g.statuses.includes(s)).length])))
     }
 
+    setClientMode(await loadClientMode(agentId))
     setLoading(false)
   }, [agentId])
 
@@ -190,7 +194,11 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
   }
 
   const title = agent.business_name || agent.name
-  const shownCount = SECTIONS.filter(s => enabled[s.key] && available[s.key]).length
+  // In client mode the page is calls, calendar and account whatever the sales
+  // switches say — those only apply to the demo.
+  const salesHidden = clientMode === true
+  const isSales = (key: SectionKey) => key !== 'calls'
+  const shownCount = SECTIONS.filter(s => enabled[s.key] && available[s.key] && !(salesHidden && isSales(s.key))).length
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -221,8 +229,18 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
               </Link>
             </div>
             <p className="text-xs mt-1" style={{ color: 'var(--slate)' }}>
-              {shownCount} av {SECTIONS.length} sektioner visas · {hasNumber ? 'telefonnummer kopplat' : 'inget telefonnummer kopplat än'}
+              {salesHidden
+                ? `Klientläge · ${shownCount ? 'samtal, ' : ''}kalender och konto`
+                : `Säljdemo · ${shownCount} av ${SECTIONS.length} sektioner visas`}
+              {' · '}{hasNumber ? 'telefonnummer kopplat' : 'inget telefonnummer kopplat än'}
             </p>
+            <div className="mt-3">
+              <ModeSwitch
+                agentId={agentId}
+                value={clientMode}
+                onChange={next => { setClientMode(next); setPreviewKey(k => k + 1) }}
+              />
+            </div>
           </div>
 
           {shareUrl ? (
@@ -293,9 +311,24 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
             </p>
 
             <ul className="space-y-2">
+              {salesHidden && (
+                <li className="flex items-start gap-3 rounded-lg px-3 py-3" style={{
+                  backgroundColor: 'rgba(59,130,246,0.08)', border: '1px solid rgba(96,165,250,0.25)',
+                }}>
+                  <span className="text-lg leading-none mt-0.5 shrink-0" aria-hidden="true">📅</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold" style={{ color: 'var(--cream)' }}>Kalender</p>
+                    <p className="text-[11px] leading-relaxed mt-0.5" style={{ color: 'var(--slate)' }}>
+                      Klientens egna bokningar — skapas från samtalen eller direkt i kalendern.
+                    </p>
+                    <p className="text-[11px] mt-1.5" style={{ color: '#4ade80' }}>✓ Alltid med i klientläge</p>
+                  </div>
+                </li>
+              )}
               {SECTIONS.map(s => {
                 const on = enabled[s.key]
                 const hasData = available[s.key]
+                const hiddenByMode = salesHidden && isSales(s.key)
                 return (
                   <li
                     key={s.key}
@@ -306,8 +339,10 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold" style={{ color: 'var(--cream)' }}>{s.label}</p>
                       <p className="text-[11px] leading-relaxed mt-0.5" style={{ color: 'var(--slate)' }}>{s.blurb}</p>
-                      <p className="text-[11px] mt-1.5" style={{ color: on && hasData ? '#4ade80' : 'var(--slate)' }}>
-                        {!hasData
+                      <p className="text-[11px] mt-1.5" style={{ color: on && hasData && !hiddenByMode ? '#4ade80' : 'var(--slate)' }}>
+                        {hiddenByMode
+                          ? '○ Visas inte i klientläge'
+                          : !hasData
                           ? s.external
                             ? '○ Inga samtal än — dyker upp av sig själv efter första riktiga samtalet'
                             : s.key === 'voice'
@@ -316,7 +351,7 @@ export default function BosEditorPage({ params }: { params: Promise<{ agentId: s
                           : on ? '✓ Visas' : '○ Avstängd'}
                       </p>
                     </div>
-                    <ToggleSwitch on={on} onToggle={() => toggle(s.key)} label={s.label} disabled={saving} />
+                    <ToggleSwitch on={on} onToggle={() => toggle(s.key)} label={s.label} disabled={saving || hiddenByMode} />
                   </li>
                 )
               })}

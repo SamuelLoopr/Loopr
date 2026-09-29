@@ -9,6 +9,7 @@ import { newShareId } from '@/lib/share-id'
 import { copyText } from '@/lib/clipboard'
 import { SECTIONS, type SectionKey } from '@/lib/master-sections'
 import ToggleSwitch from '@/app/components/ToggleSwitch'
+import ModeSwitch, { loadClientMode } from '@/app/components/ModeSwitch'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 // SectionKey and SECTIONS live in lib/master-sections.ts — shared with Bygg BOS,
@@ -69,6 +70,8 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
   const [savedAt, setSavedAt] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [sectionsUnsupported, setSectionsUnsupported] = useState(false)
+  // agents.client_mode (029): null when the column does not exist yet.
+  const [clientMode, setClientMode] = useState<boolean | null>(false)
   const [copied, setCopied] = useState(false)
   const [copyFailed, setCopyFailed] = useState(false)
 
@@ -161,6 +164,7 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
     setAuditUrl(prev => prev || leadRes.data?.website || '')
     setPropTitle(prev => prev || `Förslag till ${display}`)
 
+    setClientMode(await loadClientMode(agentId))
     setLoading(false)
   }, [agentId])
 
@@ -396,6 +400,18 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
               {visibleCount} av {SECTIONS.length} sektioner visas för prospekten
               {missing.length > 0 && ` · saknar ${missing.map(m => m.label).join(', ').toLowerCase()}`}
             </p>
+            <div className="mt-3">
+              <ModeSwitch agentId={agentId} value={clientMode} onChange={setClientMode} />
+            </div>
+            {clientMode && (
+              <p
+                className="text-xs mt-3 px-3 py-2 rounded-lg"
+                style={{ color: '#93c5fd', backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(96,165,250,0.3)' }}
+              >
+                Länken är i klientläge — klienten ser bara samtal, kalender och konto. Säljsektionerna nedan
+                visas inte förrän du byter tillbaka till Säljdemo.
+              </p>
+            )}
           </div>
 
           <div className="flex gap-2 flex-wrap shrink-0">

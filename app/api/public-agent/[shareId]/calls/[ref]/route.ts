@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { isMissingColumn } from '@/lib/db-errors'
+import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
 import { CLIENT_NOTE_MAX, clientStatusOf, isClientStatus } from '@/lib/client-status'
 
 // Lets the client work their own calls on the public BOS page (/master/[shareId]):
@@ -76,26 +77,8 @@ export async function PATCH(
 
   // ── The link ────────────────────────────────────────────────────────────
   const supabase = createSupabaseServiceClient()
-
-  // master_sections arrives with migration 017; same fallback as the read route.
-  let { data: agent, error } = await supabase
-    .from('agents')
-    .select('id, master_sections')
-    .eq('public_share_id', shareId)
-    .maybeSingle()
-
-  if (error && error.message.includes('master_sections')) {
-    ({ data: agent, error } = await supabase
-      .from('agents')
-      .select('id')
-      .eq('public_share_id', shareId)
-      .maybeSingle())
-  }
-
-  if (error || !agent) return notFound()
-
-  const sections = (agent as { master_sections?: Record<string, boolean> | null }).master_sections ?? null
-  if (sections?.calls === false) return notFound()
+  const agent = await resolveShareAgent(supabase, shareId)
+  if (!agent || !sectionOn(agent, 'calls')) return notFound()
 
   // ── The write: this ref, on this agent, on a call the page shows ────────
   const { data: updated, error: updateError } = await supabase

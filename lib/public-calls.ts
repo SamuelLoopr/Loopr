@@ -1,5 +1,6 @@
 import { parseTranscript, type Speaker } from '@/lib/call-transcript'
 import { clientStatusOf, type ClientStatus } from '@/lib/client-status'
+import type { PublicBooking } from '@/lib/public-bookings'
 import { maskPhone, redactPii } from '@/lib/redact'
 
 // What one call looks like once it leaves the server for the public BOS page
@@ -39,6 +40,8 @@ export interface PublicCall {
   status: ClientStatus
   /** The client's own note, shown exactly as they wrote it. */
   note: string | null
+  /** Calendar bookings made from this call (client mode only). */
+  bookings: PublicBooking[]
   transcript: { speaker: Speaker; text: string }[]
 }
 
@@ -48,6 +51,8 @@ export interface PublicCallsResponse {
   processing: number
   /** Whether status and notes can be changed here (needs 028_bos_client_crm). */
   editable: boolean
+  /** Whether calls can be booked into the client's calendar (needs 029 and client mode). */
+  bookingsEnabled: boolean
 }
 
 /** What the page's write route accepts back and returns. */
@@ -72,7 +77,10 @@ export interface CallRow {
 
 const REQUESTS: readonly PublicContactRequest[] = ['meeting', 'quote', 'callback']
 
-export function toPublicCall(row: CallRow, opts: { showFullNumberOnRequest: boolean }): PublicCall {
+export function toPublicCall(
+  row: CallRow,
+  opts: { showFullNumberOnRequest: boolean; bookings?: PublicBooking[] },
+): PublicCall {
   const transcript = parseTranscript(row.transcript).map(t => ({
     speaker: t.speaker,
     text: redactPii(t.text),
@@ -96,6 +104,7 @@ export function toPublicCall(row: CallRow, opts: { showFullNumberOnRequest: bool
       : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
+    bookings: opts.bookings ?? [],
     transcript,
   }
 }
