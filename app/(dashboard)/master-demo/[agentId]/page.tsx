@@ -5,30 +5,14 @@ import Link from 'next/link'
 import Panel from '@/app/components/Panel'
 import Dropdown from '@/app/components/Dropdown'
 import { supabase } from '@/lib/supabase'
+import { newShareId } from '@/lib/share-id'
 import { copyText } from '@/lib/clipboard'
+import { SECTIONS, type SectionKey } from '@/lib/master-sections'
+import ToggleSwitch from '@/app/components/ToggleSwitch'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-type SectionKey = 'calls' | 'voice' | 'sms' | 'audit' | 'proposal' | 'benefits'
-
-interface SectionDef {
-  key: SectionKey
-  icon: string
-  label: string
-  blurb: string
-  /** Sections with no backing row — they can never be "missing data". */
-  alwaysAvailable?: boolean
-  /** Data that arrives on its own (real calls) — nothing to create from here. */
-  external?: boolean
-}
-
-const SECTIONS: SectionDef[] = [
-  { key: 'calls',    icon: '📞', label: 'Samtal',              blurb: 'Kundens riktiga samtal med sammanfattning och transkript. Telefonnummer maskeras.', external: true },
-  { key: 'voice',    icon: '🎙️', label: 'Röstdemo',            blurb: 'Prospekten ringer AI-receptionisten direkt i webbläsaren.' },
-  { key: 'sms',      icon: '💬', label: 'SMS-recensionsflöde', blurb: 'Klickbar simulering av recensionsautomationen.' },
-  { key: 'audit',    icon: '📊', label: 'Audit-höjdpunkter',   blurb: 'Synlighetspoäng och de största förbättringsmöjligheterna.' },
-  { key: 'proposal', icon: '📄', label: 'Förslag',             blurb: 'Värdesumma och länk till hela förslaget.' },
-  { key: 'benefits', icon: '✨', label: 'Varför Loopr',        blurb: 'Fyra fördelskort — säljargumenten.', alwaysAvailable: true },
-]
+// SectionKey and SECTIONS live in lib/master-sections.ts — shared with Bygg BOS,
+// which switches the very same master_sections on the very same page.
 
 interface Agent {
   id: string
@@ -196,7 +180,9 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
   async function activateVoice() {
     setBusy('voice')
     setErr('voice', '')
-    const shareId = genShareId() + Math.random().toString(36).substring(2, 6)
+    // The client page's link is also the key to writing its status and notes,
+    // so it comes from the CSPRNG (lib/share-id.ts), not Math.random().
+    const shareId = newShareId()
     const { error: e } = await supabase.from('agents').update({ public_share_id: shareId }).eq('id', agentId)
     if (e) {
       setErr('voice', e.message.includes('public_share_id')
@@ -505,25 +491,7 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
                   <h3 className="text-sm font-bold truncate" style={{ color: 'var(--cream)' }}>{s.label}</h3>
                 </div>
 
-                <button
-                  onClick={() => toggle(s.key)}
-                  role="switch"
-                  aria-checked={on}
-                  aria-label={`${s.label} ${on ? 'på' : 'av'}`}
-                  className="shrink-0"
-                  style={{
-                    width: 42, height: 24, borderRadius: 12, position: 'relative',
-                    background: on ? 'var(--brick)' : 'rgba(255,255,255,0.1)',
-                    border: `1px solid ${on ? 'rgba(168,85,247,0.5)' : 'rgba(255,255,255,0.15)'}`,
-                    cursor: 'pointer', transition: 'background 0.2s',
-                  }}
-                >
-                  <span style={{
-                    position: 'absolute', top: 2, left: on ? 20 : 2,
-                    width: 18, height: 18, borderRadius: '50%',
-                    background: 'white', transition: 'left 0.2s',
-                  }} />
-                </button>
+                <ToggleSwitch on={on} onToggle={() => toggle(s.key)} label={s.label} />
               </div>
 
               <p className="text-xs leading-relaxed mb-3" style={{ color: 'var(--slate)' }}>{s.blurb}</p>

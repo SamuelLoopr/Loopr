@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Panel from '@/app/components/Panel'
 import { supabase } from '@/lib/supabase'
+import { newShareId } from '@/lib/share-id'
 import { copyText } from '@/lib/clipboard'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -259,7 +260,8 @@ export default function DemosTab({ agent }: { agent: DemosTabAgent }) {
 
     try {
       if (d.kind === 'prova') {
-        const shareId = genShareId() + Math.random().toString(36).substring(2, 6)
+        // Also the key to the client page's writes — see lib/share-id.ts.
+        const shareId = newShareId()
         const { error } = await supabase.from('agents').update({ public_share_id: shareId }).eq('id', agent.id)
         if (error) throw new Error(
           error.message.includes('public_share_id')

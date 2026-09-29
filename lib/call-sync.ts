@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { classifyCall, type CallInsight } from '@/lib/call-insights'
+import { classifyCall, INSIGHT_VERSION, type CallInsight } from '@/lib/call-insights'
+import { isMissingColumn } from '@/lib/db-errors'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
 // Completes call_logs rows for real inbound calls, from ElevenLabs' own record.
@@ -17,8 +18,9 @@ import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib
 //      sentiment and the row becomes 'completed'. One that never connected
 //      becomes 'error' with a readable reason, which is how the dashboard's
 //      Calls tab and AI Fix already present failed calls.
-//   2. enrich   — completed rows not yet classified get a Swedish summary and a
-//      contact-request label from Claude (lib/call-insights.ts).
+//   2. enrich   — completed rows not yet analysed, or analysed by an older
+//      version, get a Swedish summary, a contact-request label and the caller's
+//      name from Claude (lib/call-insights.ts).
 //
 // It runs from the public calls route, so it is bounded — a few rows per step —
 // and every row is processed once: a finished row is never fetched again, a
@@ -42,7 +44,17 @@ const SILENT_CALL: CallInsight = {
   summary: 'Den som ringde lade på utan att säga något.',
   contactRequest: 'none',
   contactNote: null,
+  callerName: null,
 }
+
+// Which analysis the schema can hold, newest first. The code is deployed ahead
+// of its migrations, so each step down is what an older database can store:
+//   'versioned'  028 — everything, re-analysing rows below INSIGHT_VERSION
+//   'labelled'   027 — summary + contact request, rows with no label yet
+//   'summary'    neither — summary only
+type EnrichMode = 'versioned' | 'labelled' | 'summary'
+
+const NEEDS_ANALYSIS = `insight_version.is.null,insight_version.lt.${INSIGHT_VERSION}`
 
 /** The subset of GET /v1/convai/conversations/{id} this file reads. */
 interface ElevenLabsConversation {
@@ -215,14 +227,15 @@ async function enrich(supabase: SupabaseClient, agentId: string, businessName: s
       .order('created_at', { ascending: false })
       .limit(ENRICH_PER_RUN)
 
-  // With migration 027 a NULL contact_request means "not classified yet".
-  // Without it there is nowhere to store the label, so only the summary is
-  // filled in; those rows are classified again once 027 has run.
-  let hasInsightColumns = true
-  let { data, error } = await base().is('contact_request', null)
+  let mode: EnrichMode = 'versioned'
+  let { data, error } = await base().or(NEEDS_ANALYSIS)
 
-  if (error?.message.includes('contact_request')) {
-    hasInsightColumns = false
+  if (isMissingColumn(error)) {
+    mode = 'labelled'
+    ;({ data, error } = await base().is('contact_request', null))
+  }
+  if (mode === 'labelled' && isMissingColumn(error)) {
+    mode = 'summary'
     ;({ data, error } = await base().is('summary', null))
   }
 
@@ -237,23 +250,34 @@ async function enrich(supabase: SupabaseClient, agentId: string, businessName: s
       const insight = callerSpoke(turns) ? await classifyCall(turns, businessName) : SILENT_CALL
       if (!insight) return
 
-      const { error: updateError } = hasInsightColumns
-        ? await supabase
-            .from('call_logs')
-            .update({
-              // A summary that arrived with the row (e.g. from the inbound
-              // webhook) is the source's own words — keep it.
-              summary: row.summary ?? insight.summary,
-              contact_request: insight.contactRequest,
-              contact_note: insight.contactNote,
-            })
-            .eq('id', row.id)
-            .is('contact_request', null)
-        : await supabase
-            .from('call_logs')
-            .update({ summary: insight.summary })
-            .eq('id', row.id)
-            .is('summary', null)
+      // A summary that arrived with the row (e.g. from the inbound webhook), or
+      // one written by an earlier analysis, is kept rather than churned.
+      const summary = row.summary ?? insight.summary
+
+      // Each write is conditional on the row still needing it, so an
+      // overlapping page load that got there first is not overwritten.
+      const table = supabase.from('call_logs')
+      const { error: updateError } =
+        mode === 'versioned'
+          ? await table
+              .update({
+                summary,
+                contact_request: insight.contactRequest,
+                contact_note: insight.contactNote,
+                caller_name: insight.callerName,
+                insight_version: INSIGHT_VERSION,
+              })
+              .eq('id', row.id)
+              .or(NEEDS_ANALYSIS)
+          : mode === 'labelled'
+            ? await table
+                .update({ summary, contact_request: insight.contactRequest, contact_note: insight.contactNote })
+                .eq('id', row.id)
+                .is('contact_request', null)
+            : await table
+                .update({ summary: insight.summary })
+                .eq('id', row.id)
+                .is('summary', null)
 
       if (updateError) console.error(`[call-sync] Kunde inte spara sammanfattning: ${updateError.message}`)
     }),

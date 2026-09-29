@@ -19,6 +19,7 @@ const PROTECTED_PAGES = [
   '/ai-agents',
   '/ai-audit-maker',
   '/booked-meetings',
+  '/bos',
   '/clients',
   '/cold-call',
   '/community',

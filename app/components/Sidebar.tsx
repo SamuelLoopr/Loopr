@@ -25,6 +25,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: 'Lead Finder', href: '/lead-finder', icon: '🔍' },
       { label: 'Master Demo', href: '/master-demo', icon: '🖥' },
+      { label: 'Bygg BOS', href: '/bos', icon: '🧩' },
       { label: 'CRM', href: '/crm', icon: '📋' },
       { label: 'Klienter', href: '/clients', icon: '🏢' },
       { label: 'Cold Call', href: '/cold-call', icon: '📞' },

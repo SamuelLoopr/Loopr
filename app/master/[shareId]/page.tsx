@@ -148,6 +148,11 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
       // none, so they make no request: no 401 in their console, and no hint that
       // an admin endpoint exists behind this page. This is a courtesy check
       // only — it is trivially spoofable, and the route enforces the real one.
+      //
+      // Skipped inside a frame: that is the live preview in Bygg BOS, which
+      // should show exactly what the client sees — and the client never sees
+      // the admin shortcut.
+      if (window.self !== window.top) return
       const { data } = await supabase.auth.getUser()
       if (cancelled || !data.user) return
 
@@ -270,9 +275,16 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
             id="samtal"
             eyebrow="Era samtal"
             title="Samtal till er AI-receptionist"
-            blurb="Varje samtal som receptionisten har tagit, med en kort sammanfattning. Tryck på ett samtal för att läsa hela konversationen."
+            blurb={calls.editable
+              ? 'Varje samtal som receptionisten har tagit. Sätt status när ni har hört av er och skriv egna anteckningar — allt sparas här.'
+              : 'Varje samtal som receptionisten har tagit, med en kort sammanfattning. Tryck på ett samtal för att läsa hela konversationen.'}
           >
-            <CallList calls={calls.calls} processing={calls.processing} />
+            <CallList
+              shareId={shareId}
+              calls={calls.calls}
+              processing={calls.processing}
+              editable={calls.editable}
+            />
           </Section>
         )}
 
