@@ -23,10 +23,17 @@ export interface ShareAgent {
   sections: Record<string, boolean> | null
   /** 029: the link is a paying client's page, not a sales demo. */
   clientMode: boolean
+  /** 030: where per-call notifications go. Null = off. */
+  notificationEmail: string | null
 }
 
 const BASE = 'id, lead_id, name, business_name, industry, description, services, status'
-const TIERS = [`${BASE}, master_sections, client_mode`, `${BASE}, master_sections`, BASE]
+const TIERS = [
+  `${BASE}, master_sections, client_mode, notification_email`, // 030
+  `${BASE}, master_sections, client_mode`,                     // 029
+  `${BASE}, master_sections`,                                  // 017
+  BASE,
+]
 
 interface AgentRow {
   id: string
@@ -39,6 +46,7 @@ interface AgentRow {
   status: string | null
   master_sections?: Record<string, boolean> | null
   client_mode?: boolean | null
+  notification_email?: string | null
 }
 
 export async function resolveShareAgent(supabase: SupabaseClient, shareId: string): Promise<ShareAgent | null> {
@@ -68,6 +76,7 @@ export async function resolveShareAgent(supabase: SupabaseClient, shareId: strin
       status: row.status,
       sections: row.master_sections ?? null,
       clientMode: row.client_mode === true,
+      notificationEmail: row.notification_email ?? null,
     }
   }
   return null

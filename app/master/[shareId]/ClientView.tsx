@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import LooprLogo from '@/app/components/LooprLogo'
 import CallList from '@/app/components/CallList'
 import BookingCalendar from '@/app/components/BookingCalendar'
@@ -23,6 +23,8 @@ export interface ClientPageData {
     receptionistActive: boolean
     phoneNumbers: string[]
     callsLast30Days: number
+    /** Adressen samtalsnotiserna går till. Null = notiser av. */
+    notificationEmail: string | null
   }
 }
 
@@ -150,6 +152,7 @@ export default function ClientView({
                 : <span style={{ color: 'rgba(255,255,255,0.45)' }}>Inget nummer kopplat än</span>}
             </AccountRow>
             <AccountRow label="Samtal senaste 30 dagarna">{data.account.callsLast30Days}</AccountRow>
+            <NotificationEmailRow shareId={shareId} initial={data.account.notificationEmail} />
             <AccountRow label="Frågor om ert konto" last>
               <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Fråga om kontot — ${name}`)}`}
                 style={{ color: '#c4b5fd', textDecoration: 'none', fontWeight: 600 }}>
@@ -163,6 +166,116 @@ export default function ClientView({
           <LooprLogo size="sm" />
         </footer>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Adressen som samtalsnotiserna går till — klientens egen inställning, ändrad
+ * här på deras sida utan inloggning. Sparas via
+ * /api/public-agent/[shareId]/settings, som bara tar emot det här fältet och
+ * bara för agenten bakom länken.
+ */
+function NotificationEmailRow({ shareId, initial }: { shareId: string; initial: string | null }) {
+  const [saved, setSaved] = useState(initial)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(initial ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [justSaved, setJustSaved] = useState(false)
+  const fieldId = useId()
+
+  async function save() {
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/public-agent/${encodeURIComponent(shareId)}/settings`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notificationEmail: draft }),
+      })
+      const body = await res.json().catch(() => null)
+      if (!res.ok) { setError(body?.error ?? 'Kunde inte spara.'); return }
+      setSaved(body.notificationEmail ?? null)
+      setDraft(body.notificationEmail ?? '')
+      setEditing(false)
+      setJustSaved(true)
+      setTimeout(() => setJustSaved(false), 3000)
+    } catch {
+      setError('Ingen kontakt med servern. Kontrollera anslutningen och försök igen.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ padding: '13px 0', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 16, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)' }}>Mejla mig vid nya samtal</span>
+        {!editing && (
+          <span style={{ fontSize: 14, color: '#f6f3ee', textAlign: 'right' }}>
+            {saved ?? <span style={{ color: 'rgba(255,255,255,0.45)' }}>Av</span>}
+            <button
+              type="button"
+              onClick={() => { setDraft(saved ?? ''); setError(''); setEditing(true) }}
+              style={{
+                marginLeft: 12, padding: 0, background: 'none', border: 'none', cursor: 'pointer',
+                fontSize: 12.5, fontWeight: 600, color: '#c4b5fd',
+              }}
+            >
+              {saved ? 'Ändra' : 'Lägg till'}
+            </button>
+          </span>
+        )}
+      </div>
+
+      {editing ? (
+        <div style={{ marginTop: 10 }}>
+          <label htmlFor={fieldId} style={{
+            display: 'block', fontSize: 11, color: 'rgba(255,255,255,0.5)', marginBottom: 6,
+          }}>
+            Vi mejlar en sammanfattning så fort ett samtal är klart. Lämna tomt för att stänga av.
+          </label>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              id={fieldId}
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              value={draft}
+              autoFocus
+              placeholder="namn@företag.se"
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false) }}
+              style={{
+                flex: '1 1 220px', minWidth: 0, boxSizing: 'border-box', fontSize: 14,
+                padding: '9px 11px', borderRadius: 9, outline: 'none', color: '#f6f3ee',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)',
+              }}
+            />
+            <button type="button" onClick={save} disabled={busy} style={{
+              border: 'none', borderRadius: 9, padding: '9px 18px', fontSize: 13, fontWeight: 700,
+              cursor: busy ? 'wait' : 'pointer', color: 'white', background: 'var(--brick)', opacity: busy ? 0.6 : 1,
+            }}>
+              {busy ? 'Sparar…' : 'Spara'}
+            </button>
+            <button type="button" onClick={() => { setEditing(false); setError('') }} disabled={busy} style={{
+              background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
+              border: '1px solid rgba(255,255,255,0.12)', borderRadius: 9,
+              padding: '9px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            }}>
+              Avbryt
+            </button>
+          </div>
+          {error && <p role="alert" style={{ margin: '8px 0 0', fontSize: 12.5, color: '#f87171' }}>{error}</p>}
+        </div>
+      ) : justSaved ? (
+        <p aria-live="polite" style={{ margin: '6px 0 0', fontSize: 12, color: '#4ade80', textAlign: 'right' }}>
+          {saved ? 'Sparat — notiser är på.' : 'Sparat — notiser är av.'}
+        </p>
+      ) : null}
     </div>
   )
 }

@@ -22,21 +22,20 @@ import { BOOKING_COLS, toPublicBooking, type BookingRow, type PublicBooking } fr
 // call_logs and bos_bookings are closed to the anon role, so the browser cannot
 // go around these routes to PostgREST either.
 //
-// PRIVACY. Anyone with the link can open the page, and links get forwarded. The
-// callers are private individuals, so their numbers are masked, and phone
-// numbers, e-mail addresses and personnummer are redacted from transcripts and
-// summaries (lib/redact.ts). The logged-in dashboard still shows everything.
+// PRIVACY. Anyone with the link can open the page, and links get forwarded.
+// Phone numbers, e-mail addresses and personnummer are redacted from
+// transcripts and summaries (lib/redact.ts) in both modes.
+//
+// The caller's own number is treated differently in the two modes. On a CLIENT
+// page it is shown in full, because that page is the business's own workspace
+// and the number is there to be rung back. On a SALES DEMO it is masked: that
+// link is made to be shown to a prospect who is not the business, and can be
+// forwarded to anyone.
 //
 // The operator can switch the section off per link in the Master Demo / Bygg BOS
 // builders (master_sections.calls = false). This route then returns nothing at
 // all rather than relying on the page to hide what it was sent — and the write
 // route refuses too.
-
-// The caller asked to be contacted, yet the business only sees a masked number
-// here. Switch this on to show the full number — on contact requests only — so
-// the business can ring back straight from the page. It is off because the link
-// is not a login: whoever holds it would see those numbers too.
-const SHOW_FULL_NUMBER_ON_CONTACT_REQUESTS = false
 
 const MAX_CALLS = 50
 
@@ -84,9 +83,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
   }
 
   // Bring this agent's newest calls up to date before reading them.
+  // Notisadressen och share-id:t följer med så att en rad som blir
+  // färdiganalyserad här kan mejlas vidare till klienten (lib/call-notify.ts).
   const sync = syncAgentCalls(supabase, {
     id: agent.id,
+    shareId,
     businessName: agent.businessName || agent.name,
+    notificationEmail: agent.clientMode ? agent.notificationEmail : null,
   }).catch(err => console.error('[public-agent/calls] Synk misslyckades:', err))
 
   let budgetTimer: ReturnType<typeof setTimeout> | undefined
@@ -158,7 +161,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
   const body: PublicCallsResponse = {
     calls: rows.map(row =>
       toPublicCall(row, {
-        showFullNumberOnRequest: SHOW_FULL_NUMBER_ON_CONTACT_REQUESTS,
+        revealNumber: agent.clientMode,
         bookings: bookingsByCall.get(row.id),
       }),
     ),

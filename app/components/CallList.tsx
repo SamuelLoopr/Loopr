@@ -5,7 +5,7 @@ import BookingForm from '@/app/components/BookingForm'
 import type { BookingsApi } from '@/app/components/useBookings'
 import { suggestBooking } from '@/lib/booking-suggestion'
 import { formatBookingWhen, toStockholm } from '@/lib/stockholm-time'
-import type { PublicCall, PublicCallUpdate, PublicContactRequest } from '@/lib/public-calls'
+import { CONTACT_REQUEST_LABEL, type PublicCall, type PublicCallUpdate } from '@/lib/public-calls'
 import {
   CLIENT_NOTE_MAX,
   CLIENT_STATUSES,
@@ -22,12 +22,6 @@ import {
 // through /api/public-agent/[shareId]/calls/[ref], which only accepts calls that
 // belong to this share id. Before 028_bos_client_crm has run the route serves
 // `editable: false` and this renders a read-only list.
-
-const REQUEST_LABEL: Record<PublicContactRequest, string> = {
-  quote: 'Offert',
-  meeting: 'Möte',
-  callback: 'Återkoppling',
-}
 
 const STATUS_COLOR: Record<ClientStatus, { fg: string; bg: string; border: string }> = {
   ny:             { fg: 'var(--brick)', bg: 'rgba(168,85,247,0.14)', border: 'rgba(168,85,247,0.35)' },
@@ -346,7 +340,17 @@ function CallCard({
           {call.callerName && (
             <span style={{ color: '#f6f3ee', fontWeight: 700, fontSize: 14.5 }}>{call.callerName} · </span>
           )}
-          <span style={{ color: 'rgba(255,255,255,0.45)', fontVariantNumeric: 'tabular-nums' }}>{call.caller}</span>
+          {call.callbackNumber ? (
+            // Hela numret visas (klientläge) — gör det ringbart direkt.
+            <a
+              href={`tel:${call.callbackNumber}`}
+              style={{ color: 'rgba(255,255,255,0.6)', fontVariantNumeric: 'tabular-nums', textDecoration: 'none' }}
+            >
+              {call.caller}
+            </a>
+          ) : (
+            <span style={{ color: 'rgba(255,255,255,0.45)', fontVariantNumeric: 'tabular-nums' }}>{call.caller}</span>
+          )}
         </p>
 
         {statusError && <p role="alert" style={errorText}>{statusError}</p>}
@@ -364,7 +368,7 @@ function CallCard({
               background: 'rgba(168,85,247,0.14)', color: 'var(--brick)',
               border: '1px solid rgba(168,85,247,0.3)',
             }}>
-              {REQUEST_LABEL[call.contactRequest]}
+              {CONTACT_REQUEST_LABEL[call.contactRequest]}
             </span>
           </div>
         )}
@@ -427,7 +431,9 @@ function CallCard({
           )
         })()}
 
-        {call.callbackNumber && (
+        {/* Numret står redan i huvudet och är ringbart där. Den stora knappen
+            sparas till samtalen där uppringningen är nästa steg. */}
+        {call.callbackNumber && call.contactRequest && (
           <a
             href={`tel:${call.callbackNumber}`}
             style={{
@@ -435,7 +441,7 @@ function CallCard({
               color: 'white', background: 'var(--brick)', borderRadius: 10, padding: '8px 14px',
             }}
           >
-            Ring upp {call.callbackNumber}
+            Ring upp
           </a>
         )}
 

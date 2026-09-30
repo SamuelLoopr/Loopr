@@ -62,6 +62,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         // number, not a caller's.
         phoneNumbers: (phonesRes.data ?? []).map(p => p.phone_number as string).filter(Boolean),
         callsLast30Days: recentRes.count ?? 0,
+        // The client's own address for call notifications (030). It is their
+        // own setting, shown back to them so they can change it.
+        notificationEmail: agent.notificationEmail,
       },
     })
   }

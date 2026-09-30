@@ -14,6 +14,13 @@ import { maskPhone, redactPii } from '@/lib/redact'
 
 export type PublicContactRequest = 'meeting' | 'quote' | 'callback'
 
+/** Vad förfrågan kallas för klienten. Delas av samtalskortet och notis-mejlet. */
+export const CONTACT_REQUEST_LABEL: Record<PublicContactRequest, string> = {
+  quote: 'Offert',
+  meeting: 'Möte',
+  callback: 'Återkoppling',
+}
+
 export interface PublicCall {
   /**
    * The call's public_ref (028_bos_client_crm.sql): a random handle whose only
@@ -29,11 +36,14 @@ export interface PublicCall {
   contactNote: string | null
   /** As the caller introduced themselves, if they did. */
   callerName: string | null
-  /** Masked — see lib/redact.ts. */
+  /**
+   * Numret som det ska visas: hela numret på en klients sida, maskerat på en
+   * säljdemo (lib/redact.ts).
+   */
   caller: string
   /**
-   * The caller's full number. Only ever present on a contact request, and only
-   * when SHOW_FULL_NUMBER_ON_CONTACT_REQUESTS is switched on in the route.
+   * Samma nummer i ringbart skick, satt bara när det visas omaskerat. Sidan
+   * använder det till tel:-länkar.
    */
   callbackNumber?: string
   /** Set by the client on this page. */
@@ -79,7 +89,15 @@ const REQUESTS: readonly PublicContactRequest[] = ['meeting', 'quote', 'callback
 
 export function toPublicCall(
   row: CallRow,
-  opts: { showFullNumberOnRequest: boolean; bookings?: PublicBooking[] },
+  opts: {
+    /**
+     * Visa hela telefonnumret. Sant bara i klientläge: sidan är då företagets
+     * egen arbetsyta och numret finns där för att kunna ringas upp. På en
+     * säljdemo, som kan visas för vem som helst, maskeras det i stället.
+     */
+    revealNumber: boolean
+    bookings?: PublicBooking[]
+  },
 ): PublicCall {
   const transcript = parseTranscript(row.transcript).map(t => ({
     speaker: t.speaker,
@@ -87,6 +105,7 @@ export function toPublicCall(
   }))
 
   const request = REQUESTS.find(r => r === row.contact_request) ?? null
+  const reveal = opts.revealNumber && Boolean(row.from_number)
 
   return {
     ref: row.public_ref ?? null,
@@ -98,10 +117,8 @@ export function toPublicCall(
     // Already cleaned when it was extracted; redacted again here because this
     // is the last point before the page, whatever wrote the column.
     callerName: row.caller_name ? redactPii(row.caller_name) : null,
-    caller: maskPhone(row.from_number),
-    ...(opts.showFullNumberOnRequest && request && row.from_number
-      ? { callbackNumber: row.from_number }
-      : {}),
+    caller: reveal ? (row.from_number as string) : maskPhone(row.from_number),
+    ...(reveal ? { callbackNumber: row.from_number as string } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
     bookings: opts.bookings ?? [],

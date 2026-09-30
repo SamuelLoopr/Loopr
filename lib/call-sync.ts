@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { classifyCall, INSIGHT_VERSION, type CallInsight } from '@/lib/call-insights'
 import { isMissingColumn } from '@/lib/db-errors'
+import { notifyCompletedCall, type NotifyAgent } from '@/lib/call-notify'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
 // Completes call_logs rows for real inbound calls, from ElevenLabs' own record.
@@ -39,6 +40,15 @@ export const NEVER_CONNECTED_AFTER_MS = 60 * 60 * 1000
 
 const FINALIZE_PER_RUN = 8
 const ENRICH_PER_RUN = 3
+
+/**
+ * Agenten som synkas. share id och notisadress bärs med hit bara för att en
+ * färdiganalyserad rad ska kunna mejlas vidare (lib/call-notify.ts) — inget av
+ * det lämnar servern.
+ */
+export interface SyncAgent extends NotifyAgent {
+  businessName: string
+}
 
 const SILENT_CALL: CallInsight = {
   summary: 'Den som ringde lade på utan att säga något.',
@@ -80,13 +90,10 @@ export function conversationIdOf(errorMessage: string | null | undefined): strin
   return errorMessage?.match(CONVERSATION_ID)?.[1] ?? null
 }
 
-export async function syncAgentCalls(
-  supabase: SupabaseClient,
-  agent: { id: string; businessName: string },
-): Promise<void> {
+export async function syncAgentCalls(supabase: SupabaseClient, agent: SyncAgent): Promise<void> {
   const elevenLabsKey = process.env.ELEVENLABS_API_KEY
   if (elevenLabsKey) await finalize(supabase, agent.id, elevenLabsKey)
-  await enrich(supabase, agent.id, agent.businessName)
+  await enrich(supabase, agent)
 }
 
 /** Calls ElevenLabs is plausibly still working on — shown as "bearbetas" on the page. */
@@ -216,7 +223,8 @@ async function finalizeOne(supabase: SupabaseClient, row: PendingRow, apiKey: st
 
 // ── 2. Enrich ────────────────────────────────────────────────────────────────
 
-async function enrich(supabase: SupabaseClient, agentId: string, businessName: string): Promise<void> {
+async function enrich(supabase: SupabaseClient, agent: SyncAgent): Promise<void> {
+  const agentId = agent.id
   const base = () =>
     supabase
       .from('call_logs')
@@ -247,7 +255,7 @@ async function enrich(supabase: SupabaseClient, agentId: string, businessName: s
   await Promise.allSettled(
     ((data ?? []) as CompletedRow[]).map(async row => {
       const turns = parseTranscript(row.transcript)
-      const insight = callerSpoke(turns) ? await classifyCall(turns, businessName) : SILENT_CALL
+      const insight = callerSpoke(turns) ? await classifyCall(turns, agent.businessName) : SILENT_CALL
       if (!insight) return
 
       // A summary that arrived with the row (e.g. from the inbound webhook), or
@@ -279,7 +287,22 @@ async function enrich(supabase: SupabaseClient, agentId: string, businessName: s
                 .eq('id', row.id)
                 .is('summary', null)
 
-      if (updateError) console.error(`[call-sync] Kunde inte spara sammanfattning: ${updateError.message}`)
+      if (updateError) {
+        console.error(`[call-sync] Kunde inte spara sammanfattning: ${updateError.message}`)
+        return
+      }
+
+      // Analysen är klar och sparad — det är här klienten ska få veta av sig.
+      // Bara i 'versioned', som är det enda läget där sammanfattning, namn och
+      // förfrågan faktiskt finns att mejla (028 och framåt). Notisen får aldrig
+      // fälla synken, så den är isolerad.
+      if (mode === 'versioned') {
+        try {
+          await notifyCompletedCall(supabase, agent, row.id)
+        } catch (err) {
+          console.error('[call-sync] Notis kastade:', err)
+        }
+      }
     }),
   )
 }
