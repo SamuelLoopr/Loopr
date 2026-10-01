@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { matchTwilioSignature, webhookUrlCandidates } from '@/lib/twilio-signature'
 import { normalizeE164 } from '@/lib/phone'
+import { isMissingColumn } from '@/lib/db-errors'
 
 // Twilio posts application/x-www-form-urlencoded here when someone dials a
 // number registered in phone_numbers. We resolve the number to an agent and
@@ -117,13 +118,16 @@ export async function POST(req: NextRequest) {
     // never reach an agent. Previously a call to an unregistered number
     // vanished without trace, which made "did it even arrive?" unanswerable.
     const log = async (status: string, agentId: string | null, errorMessage?: string) => {
-      const { error } = await supabase.from('call_logs').insert({
-        agent_id: agentId,
-        from_number: from,
-        to_number: to,
-        status,
-        error_message: errorMessage ?? null,
-      })
+      const row = { agent_id: agentId, from_number: from, to_number: to, status, error_message: errorMessage ?? null }
+      // CallSid sparas sedan migration 031, så kostnaden hos Twilio kan slås upp
+      // exakt i stället för att matchas på nummer och tid (lib/cost-sync.ts).
+      // Saknas kolumnen skrivs raden ändå — utan den.
+      const { error } = await supabase.from('call_logs').insert({ ...row, twilio_call_sid: callSid })
+      if (error && isMissingColumn(error)) {
+        const retry = await supabase.from('call_logs').insert(row)
+        if (retry.error) console.error('[twilio/incoming-call] call_logs-skrivning misslyckades:', retry.error.message)
+        return
+      }
       if (error) console.error('[twilio/incoming-call] call_logs-skrivning misslyckades:', error.message)
     }
 

@@ -42,6 +42,7 @@ const navGroups: NavGroup[] = [
   {
     heading: 'AFFÄR',
     items: [
+      { label: 'Aktiva klienter', href: '/aktiva-klienter', icon: '💰' },
       { label: 'Förslag', href: '/proposals', icon: '📄' },
       { label: 'Skicka Betalningar', href: '/skicka-betalningar', icon: '💳' },
       { label: 'Köp Minuter', href: '/kop-minuter', icon: '⏱' },

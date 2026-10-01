@@ -55,6 +55,7 @@ const SILENT_CALL: CallInsight = {
   contactRequest: 'none',
   contactNote: null,
   callerName: null,
+  usage: null,   // ingen modell anropades
 }
 
 // Which analysis the schema can hold, newest first. The code is deployed ahead
@@ -264,25 +265,36 @@ async function enrich(supabase: SupabaseClient, agent: SyncAgent): Promise<void>
 
       // Each write is conditional on the row still needing it, so an
       // overlapping page load that got there first is not overwritten.
-      const table = supabase.from('call_logs')
+      const table = () => supabase.from('call_logs')
+      const analysis = {
+        summary,
+        contact_request: insight.contactRequest,
+        contact_note: insight.contactNote,
+        caller_name: insight.callerName,
+        insight_version: INSIGHT_VERSION,
+      }
+      // Tokens loggas här eftersom Anthropic inte går att fråga i efterhand
+      // (031). Saknas kolumnerna skrivs analysen ändå — utan dem.
+      const withTokens = {
+        ...analysis,
+        anthropic_input_tokens: insight.usage?.inputTokens ?? null,
+        anthropic_output_tokens: insight.usage?.outputTokens ?? null,
+      }
+      const writeVersioned = async () => {
+        const first = await table().update(withTokens).eq('id', row.id).or(NEEDS_ANALYSIS)
+        if (!isMissingColumn(first.error)) return first
+        return table().update(analysis).eq('id', row.id).or(NEEDS_ANALYSIS)
+      }
+
       const { error: updateError } =
         mode === 'versioned'
-          ? await table
-              .update({
-                summary,
-                contact_request: insight.contactRequest,
-                contact_note: insight.contactNote,
-                caller_name: insight.callerName,
-                insight_version: INSIGHT_VERSION,
-              })
-              .eq('id', row.id)
-              .or(NEEDS_ANALYSIS)
+          ? await writeVersioned()
           : mode === 'labelled'
-            ? await table
+            ? await table()
                 .update({ summary, contact_request: insight.contactRequest, contact_note: insight.contactNote })
                 .eq('id', row.id)
                 .is('contact_request', null)
-            : await table
+            : await table()
                 .update({ summary: insight.summary })
                 .eq('id', row.id)
                 .is('summary', null)

@@ -18,6 +18,7 @@ import {
 const PROTECTED_PAGES = [
   '/ai-agents',
   '/ai-audit-maker',
+  '/aktiva-klienter',
   '/booked-meetings',
   '/bos',
   '/clients',

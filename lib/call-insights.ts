@@ -33,6 +33,12 @@ export interface CallInsight {
   contactRequest: ContactRequest
   contactNote: string | null
   callerName: string | null
+  /**
+   * Vad analysen förbrukade. Sparas per samtal (031) eftersom Anthropic inte
+   * har någon uppslagning i efterhand — kostnaden går bara att veta om den
+   * fångas här och nu. Kostnaden räknas ut i lib/service-pricing.ts.
+   */
+  usage: { inputTokens: number; outputTokens: number } | null
 }
 
 const InsightSchema = z.object({
@@ -130,6 +136,7 @@ export async function classifyCall(turns: Turn[], businessName: string): Promise
       contactNote:
         parsed.contact_request === 'none' ? null : redactPii(parsed.contact_note).trim() || null,
       callerName: cleanCallerName(parsed.caller_name),
+      usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
     }
   } catch (err) {
     if (err instanceof Anthropic.AuthenticationError) {

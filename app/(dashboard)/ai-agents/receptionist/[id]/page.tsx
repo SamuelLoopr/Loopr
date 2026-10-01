@@ -9,6 +9,8 @@ import Panel from '@/app/components/Panel'
 import Dropdown from '@/app/components/Dropdown'
 import DemosTab from '@/app/components/DemosTab'
 import { supabase } from '@/lib/supabase'
+import { isMissingColumn } from '@/lib/db-errors'
+import { DEFAULT_USD_TO_SEK, sumCosts, type CallCostRow } from '@/lib/service-pricing'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Agent {
@@ -366,11 +368,24 @@ export default function AgentDetailPage() {
     }
   }, [id])
 
+  // Kostnaden kommer från de uttryckliga kolumnerna per tjänst (031). Tidigare
+  // summerades call_logs.cost, som aldrig skrivs av något riktigt samtalsflöde
+  // — rutan visade därför alltid 0,00 kr. Faller tillbaka på den gamla
+  // kolumnen om migrationen inte är körd.
   const loadBillingStats = useCallback(async () => {
-    const { data } = await supabase.from('call_logs').select('duration_sec, cost').eq('agent_id', id)
-    const rows = data ?? []
+    const USD_TO_SEK = DEFAULT_USD_TO_SEK
+    const COLS = 'duration_sec, cost_twilio_usd, cost_elevenlabs_usd, anthropic_input_tokens, anthropic_output_tokens'
+    let res = await supabase.from('call_logs').select(COLS).eq('agent_id', id)
+    let detailed = true
+    if (res.error && isMissingColumn(res.error)) {
+      detailed = false
+      res = await supabase.from('call_logs').select('duration_sec, cost').eq('agent_id', id) as typeof res
+    }
+    const rows = (res.data ?? []) as unknown as (CallCostRow & { duration_sec: number | null; cost?: number | null })[]
     const totalSec = rows.reduce((sum, r) => sum + (r.duration_sec ?? 0), 0)
-    const totalCost = rows.reduce((sum, r) => sum + (r.cost ?? 0), 0)
+    const totalCost = detailed
+      ? sumCosts(rows).totalUsd * USD_TO_SEK
+      : rows.reduce((sum, r) => sum + (r.cost ?? 0), 0)
     setBillingStats({ calls: rows.length, minutes: Math.round(totalSec / 60), cost: totalCost })
   }, [id])
 
