@@ -208,6 +208,9 @@ export default function AgentDetailPage() {
   const [elevenLabsVoices, setElevenLabsVoices] = useState<ElevenLabsVoice[]>([])
   const [voicesLoading, setVoicesLoading] = useState(false)
   const [voicesError, setVoicesError] = useState('')
+  // Kontot har 70+ röster efter importen av hela svenska biblioteket. En
+  // rullgardin med så många poster går inte att leta i — det här filtrerar den.
+  const [voiceFilter, setVoiceFilter] = useState('')
   const [swedishLibraryVoices, setSwedishLibraryVoices] = useState<SharedSwedishVoice[]>([])
   const [libraryLoading, setLibraryLoading] = useState(false)
   const [libraryError, setLibraryError] = useState('')
@@ -1435,22 +1438,54 @@ export default function AgentDetailPage() {
               </div>
             ) : (
               <>
-                <Dropdown
-                  value={settingsVoiceId}
-                  onChange={setSettingsVoiceId}
-                  className="w-full"
-                  style={inputStyle}
-                  placeholder="— Välj röst —"
-                  options={[...elevenLabsVoices]
-                    // Swedish-tagged voices first — most premade voices in a
-                    // fresh account are English-trained and can speak Swedish
-                    // via the multilingual model, but with an English accent.
-                    .sort((a, b) => (b.language === 'sv' ? 1 : 0) - (a.language === 'sv' ? 1 : 0))
-                    .map(v => ({
-                      value: v.voiceId,
-                      label: `${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}`,
-                    }))}
-                />
+                {(() => {
+                  const q = voiceFilter.trim().toLowerCase()
+                  const matches = elevenLabsVoices.filter(v =>
+                    !q || [v.name, v.accent, v.language === 'sv' ? 'svenska' : 'engelska']
+                      .some(field => field?.toLowerCase().includes(q)))
+                  const swedish = elevenLabsVoices.filter(v => v.language === 'sv').length
+                  // Vald röst måste alltid finnas bland alternativen, annars
+                  // visar rullgardinen tomt när filtret inte matchar den.
+                  const selected = elevenLabsVoices.find(v => v.voiceId === settingsVoiceId)
+                  const shown = selected && !matches.some(v => v.voiceId === selected.voiceId)
+                    ? [selected, ...matches]
+                    : matches
+
+                  return (
+                    <>
+                      {elevenLabsVoices.length > 12 && (
+                        <input
+                          value={voiceFilter}
+                          onChange={e => setVoiceFilter(e.target.value)}
+                          placeholder={`Sök bland ${elevenLabsVoices.length} röster — namn eller dialekt`}
+                          aria-label="Sök bland rösterna"
+                          style={{ ...inputStyle, marginBottom: 8 }}
+                        />
+                      )}
+                      <Dropdown
+                        value={settingsVoiceId}
+                        onChange={setSettingsVoiceId}
+                        className="w-full"
+                        style={inputStyle}
+                        placeholder={shown.length ? '— Välj röst —' : 'Ingen röst matchar sökningen'}
+                        options={[...shown]
+                          // Swedish-tagged voices first — most premade voices in a
+                          // fresh account are English-trained and can speak Swedish
+                          // via the multilingual model, but with an English accent.
+                          .sort((a, b) => (b.language === 'sv' ? 1 : 0) - (a.language === 'sv' ? 1 : 0))
+                          .map(v => ({
+                            value: v.voiceId,
+                            label: `${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}`,
+                          }))}
+                      />
+                      <p className="text-[11px] mt-1.5" style={{ color: 'var(--slate)' }}>
+                        {q
+                          ? `${shown.length} av ${elevenLabsVoices.length} röster matchar`
+                          : `${elevenLabsVoices.length} röster i kontot — ${swedish} svenska`}
+                      </p>
+                    </>
+                  )
+                })()}
                 {!elevenLabsVoices.some(v => v.language === 'sv') && (
                   <p className="text-xs mt-1.5" style={{ color: 'var(--gold)' }}>
                     ⚠️ Inga genuint svenska röster i ditt ElevenLabs-bibliotek än — övriga röster ovan kan tala
