@@ -1,11 +1,18 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, CSSProperties } from 'react'
+import { useState, useRef, useEffect, useCallback, CSSProperties, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 export interface DropdownOption {
   value: string
   label: string
+  /**
+   * Valfri kontroll till höger om alternativet — t.ex. en lyssna-knapp i
+   * röstväljaren. Renderas som syskon till alternativknappen, inte inuti den:
+   * knapp i knapp är ogiltig HTML, och ett klick skulle annars både starta
+   * tillbehöret och välja alternativet.
+   */
+  accessory?: ReactNode
 }
 
 interface DropdownProps {
@@ -46,16 +53,31 @@ export default function Dropdown({ value, onChange, options, className = '', sty
       setOpen(false)
     }
     const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    const handleReposition = () => setOpen(false)
+
+    // Panelen är position:fixed med koordinater beräknade när den öppnades, så
+    // den måste stängas om sidan scrollar — annars blir den hängande kvar en
+    // bit från fältet den hör till.
+    //
+    // Lyssnaren måste vara i capture-fasen (scroll bubblar inte), och det är
+    // just det som gjorde att en lista med fler alternativ än panelen rymmer
+    // inte gick att bläddra i: panelens EGEN scroll fångades också, och stängde
+    // listan vid första hjulrörelsen. Scroll som kommer inifrån panelen är
+    // användaren som bläddrar, inte sidan som rör sig.
+    const handleScroll = (e: Event) => {
+      if (panelRef.current?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    const handleResize = () => setOpen(false)
+
     document.addEventListener('mousedown', handlePointerDown)
     document.addEventListener('keydown', handleKey)
-    window.addEventListener('scroll', handleReposition, true)
-    window.addEventListener('resize', handleReposition)
+    window.addEventListener('scroll', handleScroll, true)
+    window.addEventListener('resize', handleResize)
     return () => {
       document.removeEventListener('mousedown', handlePointerDown)
       document.removeEventListener('keydown', handleKey)
-      window.removeEventListener('scroll', handleReposition, true)
-      window.removeEventListener('resize', handleReposition)
+      window.removeEventListener('scroll', handleScroll, true)
+      window.removeEventListener('resize', handleResize)
     }
   }, [open])
 
@@ -105,26 +127,42 @@ export default function Dropdown({ value, onChange, options, className = '', sty
           {options.map(opt => {
             const isSelected = opt.value === value
             return (
-              <button
+              <div
                 key={opt.value}
-                type="button"
-                onClick={() => { onChange(opt.value); setOpen(false) }}
-                className="w-full text-left transition-colors"
+                className="transition-colors"
                 style={{
-                  display: 'block',
-                  padding: '8px 10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
                   borderRadius: 6,
-                  fontSize: 13,
-                  color: isSelected ? 'var(--cream)' : 'rgba(255,255,255,0.75)',
+                  paddingRight: opt.accessory ? 8 : 0,
                   backgroundColor: isSelected ? 'rgba(168,85,247,0.18)' : 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
                 }}
                 onMouseEnter={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'rgba(168,85,247,0.12)' }}
                 onMouseLeave={e => { if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent' }}
               >
-                {opt.label}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => { onChange(opt.value); setOpen(false) }}
+                  className="text-left"
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    padding: '8px 10px',
+                    fontSize: 13,
+                    color: isSelected ? 'var(--cream)' : 'rgba(255,255,255,0.75)',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {opt.label}
+                </button>
+                {opt.accessory}
+              </div>
             )
           })}
         </div>,

@@ -21,12 +21,17 @@ export async function GET() {
   }
 
   const data = await res.json()
-  const voices = (data.voices || []).map((v: { voice_id: string; name: string; labels?: Record<string, string> }) => ({
-    voiceId: v.voice_id,
-    name: v.name,
-    language: v.labels?.language ?? null,
-    accent: v.labels?.accent ?? null,
-  }))
+  // preview_url finns på varje röst och är publikt hämtbar (200 audio/mpeg utan
+  // API-nyckel, CORS *), så röstväljaren kan spela upp den direkt i webbläsaren.
+  const voices = (data.voices || []).map(
+    (v: { voice_id: string; name: string; labels?: Record<string, string>; preview_url?: string }) => ({
+      voiceId: v.voice_id,
+      name: v.name,
+      language: v.labels?.language ?? null,
+      accent: v.labels?.accent ?? null,
+      previewUrl: v.preview_url ?? null,
+    }),
+  )
 
   return NextResponse.json({ voices })
 }

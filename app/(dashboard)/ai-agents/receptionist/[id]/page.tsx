@@ -9,6 +9,7 @@ import Panel from '@/app/components/Panel'
 import Dropdown from '@/app/components/Dropdown'
 import DemosTab from '@/app/components/DemosTab'
 import { supabase } from '@/lib/supabase'
+import VoicePreview from '@/app/components/VoicePreview'
 import { isMissingColumn } from '@/lib/db-errors'
 import { DEFAULT_USD_TO_SEK, sumCosts, type CallCostRow } from '@/lib/service-pricing'
 
@@ -76,6 +77,8 @@ interface ElevenLabsVoice {
   name: string
   language: string | null
   accent: string | null
+  /** Röstprov från ElevenLabs — spelas upp direkt i listan. */
+  previewUrl: string | null
 }
 
 interface SharedSwedishVoice {
@@ -1476,12 +1479,14 @@ export default function AgentDetailPage() {
                           .map(v => ({
                             value: v.voiceId,
                             label: `${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}`,
+                            accessory: <VoicePreview url={v.previewUrl} label={v.name} size={24} />,
                           }))}
                       />
                       <p className="text-[11px] mt-1.5" style={{ color: 'var(--slate)' }}>
                         {q
                           ? `${shown.length} av ${elevenLabsVoices.length} röster matchar`
                           : `${elevenLabsVoices.length} röster i kontot — ${swedish} svenska`}
+                        {' · tryck ▶ för att lyssna'}
                       </p>
                     </>
                   )
@@ -1536,11 +1541,10 @@ export default function AgentDetailPage() {
                         .filter(v => !elevenLabsVoices.some(mine => mine.voiceId === v.voiceId))
                         .map(v => (
                           <div key={v.voiceId} className="flex items-center justify-between gap-3 p-2.5 rounded-lg" style={{ backgroundColor: 'rgba(255,255,255,0.04)' }}>
-                            <div className="flex items-center gap-2 min-w-0">
-                              {v.previewUrl && (
-                                // eslint-disable-next-line jsx-a11y/media-has-caption
-                                <audio controls src={v.previewUrl} style={{ height: 28, width: 160 }} />
-                              )}
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {/* Samma lyssna-knapp som i röstväljaren ovan, så
+                                  bara ett prov spelas i taget. */}
+                              <VoicePreview url={v.previewUrl} label={v.name} />
                               <div className="min-w-0">
                                 <p className="text-xs font-medium truncate" style={{ color: 'var(--cream)' }}>{v.name}</p>
                                 <p className="text-[10px]" style={{ color: 'var(--slate)' }}>{v.accent ?? 'svenska'}{v.gender ? ` · ${v.gender}` : ''}</p>
