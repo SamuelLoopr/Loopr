@@ -48,6 +48,13 @@ const PROTECTED_PAGES = [
 //   /api/loopr-demo/voice      the voice demo on the public /om-loopr page
 //   /api/twilio/incoming-call  Twilio's webhook for live inbound calls
 //   /api/webhooks/[token]      inbound call data, authenticated by its own token
+//   /api/46elks/[token]/incoming-call
+//                              46elks voice_start for the Swedish number,
+//                              authenticated by an unguessable token + their
+//                              documented IPs (lib/elks-callback.ts — weaker
+//                              than an HMAC; they sign nothing)
+//   /api/webhooks/elevenlabs/conversation-init/[token]
+//                              ElevenLabs asks who the agent is, per call
 //   /api/webhooks/elevenlabs/post-call
 //                              ElevenLabs' post-call webhook, authenticated by
 //                              its HMAC signature (lib/elevenlabs-signature.ts)

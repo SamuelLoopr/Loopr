@@ -89,7 +89,7 @@ export interface ElevenLabsConversation {
      * samtalet mot Twilios lista på nummer, starttid ±30 s och längd ±3 s,
      * eftersom SID:t aldrig sparades när samtalet kopplades.
      */
-    phone_call?: { call_sid?: string | null } | null
+    phone_call?: { call_sid?: string | null; type?: string | null } | null
   } | null
   analysis?: { sentiment_analysis?: { overall_label?: string | null } | null } | null
 }
@@ -254,7 +254,11 @@ export async function applyConversation(
       // SID och ElevenLabs-kostnad ligger i konversationen och är gratis att
       // ta med här. Kostnadssynken (031) slipper då gissa vilket Twilio-samtal
       // raden hör till. Saknas kolumnerna skrivs raden klar utan dem.
-      const sid = conversation.metadata?.phone_call?.call_sid ?? null
+      // Bara Twilio-samtal: kolumnen heter twilio_call_sid och ett SIP-samtals
+      // id hör inte dit. 46elks-samtal får ingen Twilio-kostnad, vilket är
+      // korrekt — den kostnaden finns på 46elks faktura, inte hos Twilio.
+      const phoneCall = conversation.metadata?.phone_call
+      const sid = phoneCall?.type === 'twilio' ? (phoneCall.call_sid ?? null) : null
       const costUsd = conversation.metadata?.cost_fiat
       const extra: Record<string, unknown> = {}
       if (sid) extra.twilio_call_sid = sid

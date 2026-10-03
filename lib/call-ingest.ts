@@ -153,3 +153,67 @@ async function loadAgent(
   }
   return null
 }
+
+// ── Samtal som kommer in via 46elks/SIP ─────────────────────────────────────
+
+/**
+ * Skriver raden för ett samtal som kommit in genom 46elks och SIP.
+ *
+ * Twilio-vägen skapar sin rad när samtalet kopplas, eftersom den själv hämtar
+ * en signed URL och därmed känner conversation_id redan då. SIP-vägen vet det
+ * inte — ljudet går 46elks -> ElevenLabs utan att passera oss. Det är
+ * conversation-init-webhooken som är första tillfället där numren OCH
+ * conversation_id finns på samma ställe, så det är därifrån den här anropas.
+ *
+ * conversation_id läggs i error_message med exakt samma formulering som
+ * Twilio-vägen använder ("… conversation_id=conv_…"). Det är inte kosmetik:
+ * det gör att conversationIdOf() och uppslagningen i ingestConversation()
+ * ovan hittar SIP-rader utan en enda ändring, och post-call-webhooken
+ * därmed fyller i transkript, sammanfattning, kostnad och mejl för den nya
+ * vägen precis som för den gamla.
+ */
+export async function recordSipCall(
+  supabase: SupabaseClient,
+  call: {
+    /** Vår interna agent. Null när numret inte gick att slå upp — samtalet ska synas ändå. */
+    agentId: string | null
+    callerId: string | null
+    calledNumber: string | null
+    conversationId: string
+  },
+): Promise<'created' | 'exists' | 'failed'> {
+  if (!CONVERSATION_ID.test(call.conversationId)) return 'failed'
+
+  // Webhooken kan levereras om. Samma kontroll som gör post-call-webhooken
+  // ofarlig vid omförsök: finns raden redan görs ingenting.
+  const { data: existing } = await supabase
+    .from('call_logs')
+    .select('id')
+    .like('error_message', `%conversation_id=${call.conversationId}%`)
+    .limit(1)
+  if (existing && existing.length > 0) return 'exists'
+
+  const row = {
+    agent_id: call.agentId,
+    from_number: call.callerId,
+    to_number: call.calledNumber,
+    status: 'in_progress',
+    error_message: `Samtal via 46elks (SIP) · conversation_id=${call.conversationId}`,
+  }
+
+  // provider är 033. Saknas kolumnen skrivs raden ändå — utan den, och då
+  // syns samtalet i BOS men utan att vägen framgår.
+  const first = await supabase.from('call_logs').insert({ ...row, provider: '46elks' })
+  if (!first.error) return 'created'
+  if (!isMissingColumn(first.error)) {
+    console.error(`[call-ingest] Kunde inte skriva SIP-raden: ${first.error.message}`)
+    return 'failed'
+  }
+
+  const retry = await supabase.from('call_logs').insert(row)
+  if (retry.error) {
+    console.error(`[call-ingest] Kunde inte skriva SIP-raden: ${retry.error.message}`)
+    return 'failed'
+  }
+  return 'created'
+}
