@@ -30,13 +30,28 @@ export const dynamic = 'force-dynamic'
 const SIP_HOST = process.env.ELEVENLABS_SIP_HOST?.trim() || 'sip.rtc.elevenlabs.io:5060'
 
 /**
- * TCP, inte UDP.
+ * UDP, inte TCP — bytt 2026-10-03 efter mätning.
  *
- * 46elks använder UDP 5060 om inget annat anges, men ElevenLabs märker UDP som
- * experimentellt och rekommenderar TCP eller TLS. TCP är det som båda stöder
- * utan förbehåll.
+ * Först valdes TCP, eftersom ElevenLabs märker UDP som experimentellt. Men med
+ * TCP kopplade samtalen upp fint och vägrade läggas på: när agenten anropade
+ * end_call avslutades konversationen hos ElevenLabs, medan telefonlinjen låg
+ * kvar och den som ringt satt i tystnad tills hen la på själv.
+ *
+ * Uppmätt på 46elks och ElevenLabs sida av samma samtal:
+ *
+ *   agenten lade på   SIP-benet 56 s  mot konversationens 37 s  → 19 s kvar
+ *   kunden lade på    SIP-benet 13 s  mot konversationens 13 s  → exakt lika
+ *
+ * Uppkopplingen fungerar alltså, och nedkopplingen fungerar när den kommer
+ * från kundens sida. Det som tappas är ElevenLabs SIP BYE — alltså ett
+ * meddelande MITT i en etablerad dialog, vilket är precis vad som försvinner
+ * om TCP-anslutningen inte hålls öppen åt rätt håll. UDP har ingen sådan
+ * anslutning att tappa, och är dessutom 46elks standard.
+ *
+ * 46elks stöder bara tcp och udp i sin SIP-URI, inte TLS, så det finns inget
+ * tredje alternativ att prova.
  */
-const SIP_TRANSPORT = 'tcp'
+const SIP_TRANSPORT = process.env.ELEVENLABS_SIP_TRANSPORT?.trim() || 'udp'
 
 /** Lägg på utan att koppla. 46elks docs/voice-hangup: "busy", "reject" eller "404". */
 const UNKNOWN_NUMBER = { hangup: '404' }
