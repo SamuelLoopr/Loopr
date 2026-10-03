@@ -33,6 +33,32 @@ När den som ringer tackar för sig, säger hejdå, eller på annat sätt visar 
 Lägg på i förtid gör du aldrig: ett "tack" eller "okej" mitt i ett pågående ärende betyder inte att samtalet är slut. Avsluta först när ärendet är avklarat eller när personen tydligt vill lägga på.
 Behöver du ställa en sista fråga eller bekräfta något, gör det före farvälet.`
 
+/**
+ * Samma sak för en väg där agenten inte kan lägga på.
+ *
+ * På SIP-vägen (46elks -> ElevenLabs) tappas ElevenLabs SIP BYE, så end_call
+ * avslutar konversationen medan telefonlinjen ligger kvar. Uppmätt på tre
+ * samtal 2026-10-03, 46elks-benet mot konversationen:
+ *
+ *   56 s mot 37 s      19 s död linje
+ *   38 s mot 28 s      10 s död linje
+ *   13 s mot 13 s      0 s — men där la kunden på själv
+ *
+ * Följden blir att agenten säger "jag avslutar samtalet nu" och sedan inte
+ * gör det: kunden sitter kvar i tystnad och pratar i tomma intet. Att inte
+ * lova något den inte kan hålla är bättre än att hålla instruktionen kvar.
+ *
+ * Utan end_call lever konversationen vidare, agenten fortsätter lyssna, och
+ * när kunden lägger på rivs allt ner korrekt — den riktningen fungerar
+ * bevisligen. Därför uppmanas den att ta ett tydligt farväl som får kunden
+ * att lägga på, i stället för att själv försöka.
+ */
+const END_CALL_SV_NO_HANGUP = `AVSLUTA SAMTALET:
+När den som ringer tackar för sig, säger hejdå, eller på annat sätt visar att ärendet är klart — ta ett tydligt och vänligt farväl och sluta sedan tala.
+Du kan inte lägga på det här samtalet själv. Säg därför aldrig att du avslutar eller lägger på, och lova inte att göra det — det är den som ringt som avslutar. Ett avslut som "Tack för ditt samtal, ha en fin dag!" räcker och låter personen lägga på själv.
+Behöver du ställa en sista fråga eller bekräfta något, gör det före farvälet.
+Blir det tyst en stund efter farvälet: fråga en gång om det är något mer, och vänta sedan utan att fylla tystnaden med prat.`
+
 const LANGUAGE_EN =
   'IMPORTANT: Always reply in English, whatever language the caller uses.'
 
@@ -41,7 +67,27 @@ When the caller thanks you, says goodbye, or otherwise signals the matter is set
 Never hang up early: a "thanks" or "okay" in the middle of an ongoing matter does not mean the call is over. End it only once the matter is handled or the person clearly wants to hang up.
 If you need a final question or confirmation, ask it before saying goodbye.`
 
+const END_CALL_EN_NO_HANGUP = `ENDING THE CALL:
+When the caller thanks you, says goodbye, or otherwise signals the matter is settled — give a clear, warm farewell and then stop speaking.
+You cannot hang up this call yourself. So never say that you are ending or hanging up the call, and do not promise to — the caller is the one who ends it. A close like "Thanks for calling, have a good day!" is enough and lets them hang up.
+If you need a final question or confirmation, ask it before saying goodbye.
+If it goes quiet after your farewell: ask once whether there is anything else, then wait without filling the silence.`
+
 export type PromptLanguage = 'sv' | 'en'
+
+export interface PromptOptions {
+  /**
+   * Kan agenten faktiskt lägga på samtalet?
+   *
+   * true (standard) för Twilio-vägen och testsamtal, där end_call bevisligen
+   * river ner samtalet — verifierat på ett skarpt inkommande samtal
+   * 2026-10-02 (termination_reason "end_call tool was called.").
+   *
+   * false för SIP-vägen via 46elks, där verktyget rapporterar success men
+   * linjen ligger kvar. Se END_CALL_SV_NO_HANGUP.
+   */
+  canEndCall?: boolean
+}
 
 /**
  * Kundens egen prompt med de gemensamma reglerna före.
@@ -49,11 +95,18 @@ export type PromptLanguage = 'sv' | 'en'
  * Reglerna ligger först så att de gäller även när kundens egen text är lång —
  * och eftersom de är korta kostar de nästan inget i varje samtal.
  */
-export function buildSystemPrompt(basePrompt: string, language: PromptLanguage): string {
-  const shared = language === 'sv'
-    ? `${LANGUAGE_SV}\n\n${END_CALL_SV}`
-    : `${LANGUAGE_EN}\n\n${END_CALL_EN}`
-  return `${shared}\n\n${basePrompt}`
+export function buildSystemPrompt(
+  basePrompt: string,
+  language: PromptLanguage,
+  { canEndCall = true }: PromptOptions = {},
+): string {
+  // Standardvärdet true gör att alla befintliga anropsställen beter sig exakt
+  // som förut — bara den som uttryckligen säger annat får den andra texten.
+  const endCall = language === 'sv'
+    ? (canEndCall ? END_CALL_SV : END_CALL_SV_NO_HANGUP)
+    : (canEndCall ? END_CALL_EN : END_CALL_EN_NO_HANGUP)
+  const language_ = language === 'sv' ? LANGUAGE_SV : LANGUAGE_EN
+  return `${language_}\n\n${endCall}\n\n${basePrompt}`
 }
 
 /** Standardprompt när kundens agent saknar egen text. */

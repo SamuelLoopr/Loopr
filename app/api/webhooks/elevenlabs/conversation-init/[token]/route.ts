@@ -161,7 +161,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       agent: {
         // Gemensamma regler + kundens egen text, samma funktion som
         // telefonvägen använder. Inte kundens prompt_text rakt av.
-        prompt: { prompt: buildSystemPrompt(resolved.promptText || DEFAULT_PROMPT[language], language) },
+        // canEndCall: false — SIP-vägen tappar ElevenLabs SIP BYE, så end_call
+        // avslutar konversationen medan telefonlinjen ligger kvar. Uppmätt tre
+        // gånger 2026-10-03: 10–19 sekunder död linje efter agentens farväl.
+        // Agenten ska därför ta farväl utan att lova att lägga på. Twilio-vägen
+        // rörs inte — där fungerar end_call och behåller sitt standardläge.
+        prompt: {
+          prompt: buildSystemPrompt(resolved.promptText || DEFAULT_PROMPT[language], language, {
+            canEndCall: false,
+          }),
+        },
         first_message: resolved.welcomeMessage || DEFAULT_WELCOME[language],
         language,
       },
