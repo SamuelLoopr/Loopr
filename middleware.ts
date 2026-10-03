@@ -48,6 +48,9 @@ const PROTECTED_PAGES = [
 //   /api/loopr-demo/voice      the voice demo on the public /om-loopr page
 //   /api/twilio/incoming-call  Twilio's webhook for live inbound calls
 //   /api/webhooks/[token]      inbound call data, authenticated by its own token
+//   /api/webhooks/elevenlabs/post-call
+//                              ElevenLabs' post-call webhook, authenticated by
+//                              its HMAC signature (lib/elevenlabs-signature.ts)
 //   /api/cal-com/*             reachable as ElevenLabs agent tools during a live
 //                              call, so a session check would break booking
 const PROTECTED_API = [

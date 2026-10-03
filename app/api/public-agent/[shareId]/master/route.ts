@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
+import { isMissingColumn } from '@/lib/db-errors'
+import { MIN_RATED, resolutionOf, type ResolutionRow } from '@/lib/resolution-rate'
 
 // Backs the public page (app/master/[shareId]), which has two modes:
 //
@@ -29,6 +31,41 @@ interface AuditContent {
 
 const DAY_MS = 86_400_000
 
+/**
+ * Hur stor andel av klientens samtal receptionisten klarade själv, samma 30
+ * dagar som samtalsräknaren nedan.
+ *
+ * Egen fråga eftersom räknaren är en head-count utan rader. Returnerar null
+ * när migration 032 inte är körd, eller när det finns för få bedömda samtal —
+ * en lösningsgrad på "100 %" räknad på ett samtal är sann men missvisande, och
+ * det här är siffran klienten ska kunna lita på. Bara summor lämnar servern,
+ * aldrig något per samtal.
+ */
+async function resolutionLast30Days(
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  agentId: string,
+): Promise<{ percent: number; solved: number; rated: number } | null> {
+  const { data, error } = await supabase
+    .from('call_logs')
+    .select('ai_resolved')
+    .eq('agent_id', agentId)
+    .eq('status', 'completed')
+    .gte('created_at', new Date(Date.now() - 30 * DAY_MS).toISOString())
+
+  if (error) {
+    if (!isMissingColumn(error)) {
+      console.error('[public-agent/master] Kunde inte läsa lösningsgrad:', error.message)
+    }
+    return null
+  }
+
+  const resolution = resolutionOf((data ?? []) as ResolutionRow[])
+  const rated = resolution.solved + resolution.unsolved
+  if (rated < MIN_RATED || resolution.rate == null) return null
+
+  return { percent: Math.floor(resolution.rate * 100), solved: resolution.solved, rated }
+}
+
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ shareId: string }> }) {
   const { shareId } = await params
   // Runs for callers with no session, so it uses the service client — see
@@ -42,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
 
   // ── Client mode ─────────────────────────────────────────────────────────
   if (agent.clientMode) {
-    const [phonesRes, recentRes] = await Promise.all([
+    const [phonesRes, recentRes, resolution] = await Promise.all([
       supabase.from('phone_numbers').select('phone_number').eq('agent_id', agent.id),
       supabase
         .from('call_logs')
@@ -50,6 +87,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         .eq('agent_id', agent.id)
         .eq('status', 'completed')
         .gte('created_at', new Date(Date.now() - 30 * DAY_MS).toISOString()),
+      resolutionLast30Days(supabase, agent.id),
     ])
 
     return NextResponse.json({
@@ -62,6 +100,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         // number, not a caller's.
         phoneNumbers: (phonesRes.data ?? []).map(p => p.phone_number as string).filter(Boolean),
         callsLast30Days: recentRes.count ?? 0,
+        // Andelen samtal receptionisten klarade helt själv (032). Null när den
+        // inte går att räkna än — sidan visar då ingen rad för den.
+        resolution,
         // The client's own address for call notifications (030). It is their
         // own setting, shown back to them so they can change it.
         notificationEmail: agent.notificationEmail,

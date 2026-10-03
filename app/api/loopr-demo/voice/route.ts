@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { buildSystemPrompt } from '@/lib/shared-prompt'
 
 // Backs the voice demo on the public Loopr presentation page (app/om-loopr).
 //
@@ -16,10 +17,7 @@ import { NextResponse } from 'next/server'
 // /master go through /api/public-agent/[shareId] with prompts from the database
 // and are unaffected by anything in this file.
 
-const LANGUAGE_ENFORCEMENT_SV =
-  'VIKTIGT: Du ska ALLTID svara på svenska, oavsett vilket språk den som ringer använder. Använd aldrig engelska.\n\n'
-
-const DEMO_PROMPT = `${LANGUAGE_ENFORCEMENT_SV}Du är en AI-säljare för Loopr, en svensk plattform som ger lokala servicebolag en AI-receptionist som svarar på samtal dygnet runt, automatiserar uppföljning av Google-recensioner via SMS, följer upp missade samtal, och kan ringa utgående samtal för att boka möten med nya leads.
+const DEMO_PROMPT = `Du är en AI-säljare för Loopr, en svensk plattform som ger lokala servicebolag en AI-receptionist som svarar på samtal dygnet runt, automatiserar uppföljning av Google-recensioner via SMS, följer upp missade samtal, och kan ringa utgående samtal för att boka möten med nya leads.
 
 Din uppgift i det här samtalet: förklara vad Loopr gör, svara på frågor om hur det fungerar, vad det kostar (om du inte har exakta priser, säg att det är kostnadsfritt att boka en demo för att få en offert), och uppmuntra den som ringer att boka in en kostnadsfri demo. Var entusiastisk men inte påträngande — detta är ett demo-samtal som visar hur bra Loopr själva är på att hantera samtal, så var ett föredöme.
 
@@ -71,7 +69,9 @@ export async function POST() {
 
   return NextResponse.json({
     signedUrl: signed_url,
-    prompt: DEMO_PROMPT,
+    // Samma gemensamma regler som kundernas agenter, inklusive att faktiskt
+    // lägga på när den som ringer tackar för sig.
+    prompt: buildSystemPrompt(DEMO_PROMPT, 'sv'),
     welcomeMessage: DEMO_WELCOME,
     language: 'sv',
     voiceId: DEMO_VOICE_ID,

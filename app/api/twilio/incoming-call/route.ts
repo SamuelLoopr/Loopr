@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { matchTwilioSignature, webhookUrlCandidates } from '@/lib/twilio-signature'
 import { normalizeE164 } from '@/lib/phone'
+import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 import { isMissingColumn } from '@/lib/db-errors'
 
 // Twilio posts application/x-www-form-urlencoded here when someone dials a
@@ -204,9 +205,14 @@ export async function POST(req: NextRequest) {
     if (agent.voice_similarity_boost != null) ttsOverride.similarity_boost = Number(agent.voice_similarity_boost)
     if (agent.voice_speed != null) ttsOverride.speed = Number(agent.voice_speed)
 
+    // Gemensamma regler + kundens egen text. Tidigare skickades prompt_text
+    // rakt av här, vilket gjorde att varken språkregeln eller instruktionen om
+    // att lägga på nådde skarpa samtal — bara testsamtalen i webbläsaren.
     const agentOverride: Record<string, unknown> = { language }
-    if (agent.prompt_text) agentOverride.prompt = { prompt: agent.prompt_text }
-    if (agent.welcome_message) agentOverride.first_message = agent.welcome_message
+    agentOverride.prompt = {
+      prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language),
+    }
+    agentOverride.first_message = agent.welcome_message || DEFAULT_WELCOME[language]
 
     const registerBody = {
       agent_id: elAgentId,

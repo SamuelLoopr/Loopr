@@ -6,6 +6,7 @@ import Panel from '@/app/components/Panel'
 import { supabase } from '@/lib/supabase'
 import { isMissingColumn } from '@/lib/db-errors'
 import type { ClientCostRow, PeriodKey } from '@/app/api/admin/client-costs/route'
+import { formatRate, MIN_RATED, type Resolution } from '@/lib/resolution-rate'
 
 // Aktiva klienter — vad varje kund kostar oss hos Twilio, ElevenLabs och
 // Anthropic, och vad de betalar.
@@ -30,6 +31,7 @@ interface Payload {
   period: PeriodKey
   priceSupported?: boolean
   costsSupported?: boolean
+  resolutionSupported?: boolean
   note?: string | null
 }
 
@@ -69,11 +71,19 @@ export default function AktivaKlienterPage() {
       margin: list.reduce((s, c) => s + (c.marginSek ?? 0), 0),
       estimated: list.reduce((s, c) => s + c.estimatedCalls, 0),
       missing: list.reduce((s, c) => s + c.missingTwilio + c.missingElevenLabs, 0),
+      // Lösningsgraden summeras på samtalen, inte som ett snitt av klienternas
+      // procent: annars väger en klient med tre samtal lika tungt som en med
+      // trehundra.
+      solved: list.reduce((s, c) => s + (c.resolution?.solved ?? 0), 0),
+      rated: list.reduce((s, c) => s + (c.resolution?.solved ?? 0) + (c.resolution?.unsolved ?? 0), 0),
+      unrated: list.reduce((s, c) => s + (c.resolution?.unrated ?? 0), 0),
     }
   }, [data])
 
   const priceSupported = data?.priceSupported !== false
   const costsSupported = data?.costsSupported !== false
+  const resolutionSupported = data?.resolutionSupported !== false
+  const totalRate = totals.rated > 0 ? totals.solved / totals.rated : null
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -134,6 +144,15 @@ export default function AktivaKlienterPage() {
         </Panel>
       )}
 
+      {costsSupported && !resolutionSupported && (
+        <Panel padding="p-4" enableTilt={false} className="mb-5">
+          <p className="text-xs" style={{ color: 'var(--gold)' }}>
+            ⚠️ Kör migration 032_call_resolution.sql i Supabase SQL Editor — tills dess visas ingen
+            lösningsgrad. Samtalen analyseras om automatiskt efteråt och fyller i den.
+          </p>
+        </Panel>
+      )}
+
       {loading && !data ? (
         <Panel padding="p-10" enableTilt={false}>
           <p className="text-sm text-center" style={{ color: 'var(--slate)' }}>Hämtar kostnader…</p>
@@ -150,8 +169,14 @@ export default function AktivaKlienterPage() {
       ) : (
         <>
           {/* Summering */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
             <Kpi label="Samtal" value={String(totals.calls)} sub={`${totals.minutes} min`} />
+            <Kpi
+              label="Löses av AI"
+              value={totals.rated >= MIN_RATED ? (formatRate(totalRate) ?? '—') : '—'}
+              sub={totals.rated >= MIN_RATED ? `${totals.solved} av ${totals.rated} samtal` : 'för få bedömda samtal'}
+              accent={totals.rated >= MIN_RATED && totalRate != null && totalRate >= 0.8 ? '#4ade80' : undefined}
+            />
             <Kpi label="Kostnad" value={kr(totals.total)} sub={`${totals.minutes ? kr(totals.total / totals.minutes) : '—'}/min`} />
             <Kpi label="Intäkt" value={totals.price ? kr(totals.price) : '—'} sub="satta månadspriser" />
             <Kpi
@@ -165,12 +190,13 @@ export default function AktivaKlienterPage() {
           {/* Tabell */}
           <Panel padding="p-0" enableTilt={false} className="overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full" style={{ borderCollapse: 'collapse', minWidth: 880 }}>
+              <table className="w-full" style={{ borderCollapse: 'collapse', minWidth: 980 }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
                     <Th left>Klient</Th>
                     <Th>Samtal</Th>
                     <Th>Minuter</Th>
+                    <Th>Löses av AI</Th>
                     <Th>Twilio</Th>
                     <Th>ElevenLabs</Th>
                     <Th>Anthropic</Th>
@@ -194,6 +220,7 @@ export default function AktivaKlienterPage() {
                     <Td left bold>Totalt</Td>
                     <Td>{totals.calls}</Td>
                     <Td>{totals.minutes}</Td>
+                    <Td bold>{totals.rated >= MIN_RATED ? (formatRate(totalRate) ?? '—') : '—'}</Td>
                     <Td>{kr(totals.twilio)}</Td>
                     <Td>{kr(totals.elevenLabs)}</Td>
                     <Td>{kr(totals.anthropic)}</Td>
@@ -220,6 +247,16 @@ export default function AktivaKlienterPage() {
               <p className="text-[11px]" style={{ color: 'var(--slate)' }}>
                 * {totals.missing} kostnadsposter saknas hos leverantören — oftast samtal som aldrig
                 debiterades (upptaget, inget svar) eller där priset inte hunnit sättas än.
+              </p>
+            )}
+            {resolutionSupported && (
+              <p className="text-[11px]" style={{ color: 'var(--slate)' }}>
+                * &quot;Löses av AI&quot; är samtal där den som ringde fick vad den behövde och ingenting
+                återstår för klienten att göra. Samtal med en kontaktförfrågan — offert, bokning,
+                återuppringning — räknas som olösta, liksom samtal där receptionisten inte kunde svara.
+                {totals.unrated > 0 && ` ${totals.unrated} samtal där ingen sa något, eller som inte
+                hunnit analyseras, räknas varken som lösta eller olösta.`}
+                {' '}Siffran visas från {MIN_RATED} bedömda samtal och uppåt.
               </p>
             )}
             <p className="text-[11px]" style={{ color: 'var(--slate)' }}>
@@ -270,6 +307,7 @@ function ClientRow({
       </Td>
       <Td>{client.calls}</Td>
       <Td>{client.minutes}</Td>
+      <ResolutionTd resolution={client.resolution} />
       <Td>{kr(client.costs.twilioSek)}</Td>
       <Td>{kr(client.costs.elevenLabsSek)}</Td>
       <Td>
@@ -315,6 +353,31 @@ function ClientRow({
         {client.marginSek != null ? kr(client.marginSek) : '—'}
       </Td>
     </tr>
+  )
+}
+
+/**
+ * Lösningsgraden för en klient.
+ *
+ * Under MIN_RATED bedömda samtal visas antalet i stället för procenten: "100 %"
+ * på ett enda samtal är sant men säger ingenting, och det är precis den sortens
+ * siffra som får någon att misstro resten av tabellen.
+ */
+function ResolutionTd({ resolution }: { resolution: Resolution | null }) {
+  if (!resolution) return <Td>—</Td>
+
+  const rated = resolution.solved + resolution.unsolved
+  if (rated < MIN_RATED) {
+    return <Td color="var(--slate)">{rated > 0 ? `${resolution.solved}/${rated}` : '—'}</Td>
+  }
+
+  const rate = resolution.rate ?? 0
+  return (
+    <Td color={rate >= 0.8 ? '#4ade80' : rate >= 0.5 ? undefined : 'var(--gold)'}>
+      <span title={`${resolution.solved} lösta, ${resolution.unsolved} kräver uppföljning, ${resolution.unrated} obedömda`}>
+        {formatRate(resolution.rate)}
+      </span>
+    </Td>
   )
 }
 

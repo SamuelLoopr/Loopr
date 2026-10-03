@@ -23,6 +23,11 @@ export interface ClientPageData {
     receptionistActive: boolean
     phoneNumbers: string[]
     callsLast30Days: number
+    /**
+     * Andelen samtal AI-receptionisten klarade helt själv, senaste 30 dagarna.
+     * Null när det är för få samtal att räkna på — raden visas då inte.
+     */
+    resolution: { percent: number; solved: number; rated: number } | null
     /** Adressen samtalsnotiserna går till. Null = notiser av. */
     notificationEmail: string | null
   }
@@ -152,6 +157,17 @@ export default function ClientView({
                 : <span style={{ color: 'rgba(255,255,255,0.45)' }}>Inget nummer kopplat än</span>}
             </AccountRow>
             <AccountRow label="Samtal senaste 30 dagarna">{data.account.callsLast30Days}</AccountRow>
+            {data.account.resolution && (
+              <AccountRow label="Löstes av receptionisten">
+                <span style={{ fontWeight: 700, color: '#4ade80' }}>
+                  {data.account.resolution.percent} %
+                </span>
+                <span style={{ color: 'rgba(255,255,255,0.45)', marginLeft: 8, fontSize: 13 }}>
+                  {data.account.resolution.solved} av {data.account.resolution.rated} samtal krävde
+                  ingen uppföljning från er
+                </span>
+              </AccountRow>
+            )}
             <NotificationEmailRow shareId={shareId} initial={data.account.notificationEmail} />
             <AccountRow label="Frågor om ert konto" last>
               <a href={`mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(`Fråga om kontot — ${name}`)}`}

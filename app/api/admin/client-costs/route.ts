@@ -3,6 +3,7 @@ import { createSupabaseServerClient } from '@/lib/supabase-server'
 import { isMissingColumn } from '@/lib/db-errors'
 import { syncCallCosts } from '@/lib/cost-sync'
 import { sumCosts, usdToSekRate, type CallCostRow } from '@/lib/service-pricing'
+import { resolutionOf, type Resolution, type ResolutionRow } from '@/lib/resolution-rate'
 
 // Underlaget till dashboardsidan "Aktiva klienter": kostnad per klient och
 // tjänst, för agenterna som är riktiga kunder (client_mode = true).
@@ -41,6 +42,8 @@ export interface ClientCostRow {
   /** Samtal som saknar kostnad från respektive leverantör. */
   missingTwilio: number
   missingElevenLabs: number
+  /** Andelen samtal AI:n löste själv. Null när migration 032 inte är körd. */
+  resolution: Resolution | null
 }
 
 export async function GET(req: NextRequest) {
@@ -100,22 +103,27 @@ export async function GET(req: NextRequest) {
   const since = periodStart(period)
 
   // ── Samtal och nummer ─────────────────────────────────────────────────────
-  const COST_COLS = 'agent_id, duration_sec, cost_twilio_usd, cost_elevenlabs_usd, anthropic_input_tokens, anthropic_output_tokens'
-  let callsQuery = supabase
-    .from('call_logs')
-    .select(COST_COLS)
-    .in('agent_id', agentIds)
-    .eq('status', 'completed')
-  if (since) callsQuery = callsQuery.gte('created_at', since)
-
-  let callsRes = await callsQuery
-  let costsSupported = true
-  if (callsRes.error && isMissingColumn(callsRes.error)) {
-    costsSupported = false
-    let base = supabase.from('call_logs').select('agent_id, duration_sec').in('agent_id', agentIds).eq('status', 'completed')
-    if (since) base = base.gte('created_at', since)
-    callsRes = (await base) as typeof callsRes
+  const COST_COLS = 'cost_twilio_usd, cost_elevenlabs_usd, anthropic_input_tokens, anthropic_output_tokens'
+  // Nyast schema först; varje steg ner är vad en äldre databas kan svara på.
+  // Koden ligger före sina migrationer, så alla tre nivåerna måste fungera.
+  const CALL_TIERS = [
+    `agent_id, duration_sec, ${COST_COLS}, ai_resolved`, // 032
+    `agent_id, duration_sec, ${COST_COLS}`,              // 031
+    'agent_id, duration_sec',
+  ]
+  const callsFor = (cols: string) => {
+    const q = supabase.from('call_logs').select(cols).in('agent_id', agentIds).eq('status', 'completed')
+    return since ? q.gte('created_at', since) : q
   }
+
+  let callsRes = await callsFor(CALL_TIERS[0])
+  let tier = 0
+  while (callsRes.error && isMissingColumn(callsRes.error) && tier < CALL_TIERS.length - 1) {
+    tier++
+    callsRes = (await callsFor(CALL_TIERS[tier])) as typeof callsRes
+  }
+  const resolutionSupported = tier === 0
+  const costsSupported = tier <= 1
   if (callsRes.error) {
     console.error('[client-costs] Kunde inte läsa samtal:', callsRes.error.message)
     return NextResponse.json({ error: 'Samtalen kunde inte hämtas.' }, { status: 500 })
@@ -123,7 +131,7 @@ export async function GET(req: NextRequest) {
 
   const { data: phones } = await supabase.from('phone_numbers').select('agent_id, phone_number').in('agent_id', agentIds)
 
-  type CallRow = CallCostRow & { agent_id: string; duration_sec: number | null }
+  type CallRow = CallCostRow & ResolutionRow & { agent_id: string; duration_sec: number | null }
   const calls = (callsRes.data ?? []) as unknown as CallRow[]
   const rate = usdToSekRate()
 
@@ -151,6 +159,7 @@ export async function GET(req: NextRequest) {
       estimatedCalls: totals.estimatedCalls,
       missingTwilio: totals.missingTwilio,
       missingElevenLabs: totals.missingElevenLabs,
+      resolution: resolutionSupported ? resolutionOf(own) : null,
     }
   })
 
@@ -160,6 +169,7 @@ export async function GET(req: NextRequest) {
     period,
     priceSupported,
     costsSupported,
+    resolutionSupported,
     note: syncNote,
   })
 }

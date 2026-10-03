@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
+import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 
 // Backs the public "prova agenten live" page (app/prova/[shareId]).
 //
@@ -11,11 +12,8 @@ import { createSupabaseServiceClient } from '@/lib/supabase-server'
 // GET  → display info for the page
 // POST → starts a conversation (signed ElevenLabs URL + overrides)
 
-const DEFAULT_PROMPT_SV = 'Du är en AI-receptionist för ett svenskt lokalt serviceföretag. Svara alltid vänligt och professionellt.'
-const DEFAULT_PROMPT_EN = 'You are an AI receptionist for a local service business. Always respond politely and professionally.'
-const DEFAULT_WELCOME_SV = 'Hej! Hur kan jag hjälpa dig?'
-const DEFAULT_WELCOME_EN = 'Hello! How can I help you today?'
-const LANGUAGE_ENFORCEMENT_SV = 'VIKTIGT: Du ska ALLTID svara på svenska, oavsett vilket språk kunden använder. Använd aldrig engelska.\n\n'
+// Standardtexter och de gemensamma reglerna ligger i lib/shared-prompt.ts,
+// delade med telefonvägen och dashboardens testsamtal.
 
 // Runs for callers with no session, so it uses the service client:
 // SUPABASE_SERVICE_ROLE_KEY when configured, otherwise the anon key it has
@@ -126,13 +124,11 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ sh
   const { signed_url } = await elRes.json()
 
   const language = agent.language === 'en' ? 'en' : 'sv'
-  const isSwedish = language === 'sv'
-  const basePrompt = agent.prompt_text || (isSwedish ? DEFAULT_PROMPT_SV : DEFAULT_PROMPT_EN)
 
   return NextResponse.json({
     signedUrl: signed_url,
-    prompt: isSwedish ? LANGUAGE_ENFORCEMENT_SV + basePrompt : basePrompt,
-    welcomeMessage: agent.welcome_message || (isSwedish ? DEFAULT_WELCOME_SV : DEFAULT_WELCOME_EN),
+    prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language),
+    welcomeMessage: agent.welcome_message || DEFAULT_WELCOME[language],
     language,
     voiceId: agent.voice_id || '',
   })

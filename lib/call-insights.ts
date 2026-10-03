@@ -25,14 +25,24 @@ export type ContactRequest = 'none' | 'meeting' | 'quote' | 'callback'
  * classified before caller_name existed get a name.
  *   1  summary, contact_request, contact_note   (027_call_insights)
  *   2  + caller_name                            (028_bos_client_crm)
+ *   3  + ai_resolved                            (032_call_resolution)
  */
-export const INSIGHT_VERSION = 2
+export const INSIGHT_VERSION = 3
 
 export interface CallInsight {
   summary: string
   contactRequest: ContactRequest
   contactNote: string | null
   callerName: string | null
+  /**
+   * Om samtalet blev helt klart utan att någon på företaget behöver göra något.
+   *
+   * null betyder "går inte att bedöma" — den som ringde sa aldrig något, så
+   * det fanns ingenting att lösa. Såna samtal räknas varken som lösta eller
+   * olösta i lösningsgraden (lib/resolution-rate.ts); att kalla dem lösta
+   * hade blåst upp siffran med fellagda samtal.
+   */
+  aiResolved: boolean | null
   /**
    * Vad analysen förbrukade. Sparas per samtal (031) eftersom Anthropic inte
    * har någon uppslagning i efterhand — kostnaden går bara att veta om den
@@ -46,6 +56,7 @@ const InsightSchema = z.object({
   contact_request: z.enum(['none', 'meeting', 'quote', 'callback']),
   contact_note: z.string(),
   caller_name: z.string(),
+  ai_resolved: z.boolean(),
 })
 
 const SYSTEM_PROMPT = `Du läser transkriptet av ett telefonsamtal som en AI-receptionist tog emot åt ett svenskt lokalt företag, och sammanfattar det för företagets ägare. Ägaren läser resultatet i en samtalslogg och använder det för att se vilka kunder som ska kontaktas.
@@ -60,6 +71,13 @@ contact_request — vad den som ringde vill att företaget gör härnäst:
 Bedöm vad personen ville även om samtalet bröts innan kontaktuppgifter lämnades: den som ber om en offert och sedan lägger på har ändå gjort en offertförfrågan.
 
 contact_note — om contact_request inte är "none": vad förfrågan gäller, på en rad (runt 80 tecken), till exempel "Offert på badrumsrenovering, ca 6 kvm". Annars en tom sträng.
+
+ai_resolved — true om samtalet är helt färdigt: den som ringde fick vad hen behövde, och ingen på företaget behöver göra något mer.
+Sätt false om något av detta stämmer:
+- personen vill bli kontaktad, bokad, eller ha en offert (allt utom contact_request "none")
+- receptionisten sa att hen inte vet, inte kan hjälpa till, ska koppla vidare, eller att någon ringer upp
+- personen fick inte svar på sin fråga, eller samtalet bröts med ärendet ouppklarat
+Ett samtal där personen bara ville ha praktisk information — öppettider, adress, vad företaget gör — och fick den, är true.
 
 caller_name — namnet som den som ringde själv uppger, som det sades (en person, eller ett företag om det är allt som nämns). Tom sträng om inget namn sägs. Gissa aldrig, och ta inte receptionistens eller det uppringda företagets namn.
 
@@ -135,6 +153,11 @@ export async function classifyCall(turns: Turn[], businessName: string): Promise
       contactRequest: parsed.contact_request,
       contactNote:
         parsed.contact_request === 'none' ? null : redactPii(parsed.contact_note).trim() || null,
+      // Räknas om i stället för att litas på rakt av: den som ber om en offert
+      // har per definition ett ärende kvar för företaget, oavsett hur modellen
+      // svarade. Då kan badgen "Vill bli kontaktad" i BOS aldrig säga en sak
+      // och lösningsgraden en annan.
+      aiResolved: parsed.ai_resolved && parsed.contact_request === 'none',
       callerName: cleanCallerName(parsed.caller_name),
       usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
     }
