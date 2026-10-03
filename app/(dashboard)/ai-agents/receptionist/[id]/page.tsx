@@ -10,7 +10,12 @@ import Dropdown from '@/app/components/Dropdown'
 import DemosTab from '@/app/components/DemosTab'
 import { supabase } from '@/lib/supabase'
 import VoicePreview from '@/app/components/VoicePreview'
-import { isMissingColumn } from '@/lib/db-errors'
+import StarRating from '@/app/components/StarRating'
+import {
+  FAVOURITE_FROM, isFavourite, ratingSummary, SORT_LABELS, sortVoices,
+  type VoiceRating, type VoiceSortKey,
+} from '@/lib/voice-ratings'
+import { isMissingColumn, isMissingTable } from '@/lib/db-errors'
 import { DEFAULT_USD_TO_SEK, sumCosts, type CallCostRow } from '@/lib/service-pricing'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -220,6 +225,14 @@ export default function AgentDetailPage() {
   const [importingVoiceId, setImportingVoiceId] = useState('')
   const [importError, setImportError] = useState('')
   const [showMoreSwedishVoices, setShowMoreSwedishVoices] = useState(false)
+  // Mina egna lyssningsbetyg per röst (034). Nyckel är voice_id, så samma
+  // bedömning följer med när rösten väljs åt nästa kund.
+  const [voiceRatings, setVoiceRatings] = useState<Record<string, VoiceRating>>({})
+  const [ratingsSupported, setRatingsSupported] = useState(true)
+  const [ratingsError, setRatingsError] = useState('')
+  const [voiceSort, setVoiceSort] = useState<VoiceSortKey>('swedish')
+  const [onlyFavourites, setOnlyFavourites] = useState(false)
+  const [showRatingsPanel, setShowRatingsPanel] = useState(false)
 
   // Calendar tab state
   const [calEventTypeId, setCalEventTypeId] = useState('')
@@ -429,6 +442,66 @@ export default function AgentDetailPage() {
     }
   }, [])
 
+  const loadVoiceRatings = useCallback(async () => {
+    setRatingsError('')
+    const { data, error } = await supabase.from('voice_ratings').select('voice_id, rating, note')
+    if (error) {
+      // Tabellen saknas = migration 034 inte körd. Röstväljaren ska fungera
+      // ändå, bara utan betyg — koden ligger före sina migrationer.
+      if (isMissingTable(error)) setRatingsSupported(false)
+      else setRatingsError(error.message)
+      return
+    }
+    const next: Record<string, VoiceRating> = {}
+    for (const r of data ?? []) {
+      next[r.voice_id as string] = {
+        voiceId: r.voice_id as string,
+        rating: (r.rating as number) ?? null,
+        note: (r.note as string) ?? null,
+      }
+    }
+    setVoiceRatings(next)
+  }, [])
+
+  /**
+   * Sparar ett betyg eller en anteckning för en röst.
+   *
+   * Skrivs optimistiskt i gränssnittet först: att klicka en stjärna ska kännas
+   * omedelbart när man sitter och lyssnar igenom 55 röster. Misslyckas skrivningen
+   * läses allt in igen, så listan aldrig visar något som inte står i databasen.
+   */
+  async function saveVoiceRating(voiceId: string, patch: Partial<Omit<VoiceRating, 'voiceId'>>) {
+    if (!ratingsSupported) return
+    const prev = voiceRatings[voiceId]
+    const merged: VoiceRating = {
+      voiceId,
+      rating: patch.rating !== undefined ? patch.rating : (prev?.rating ?? null),
+      note: patch.note !== undefined ? patch.note : (prev?.note ?? null),
+    }
+    setVoiceRatings(r => ({ ...r, [voiceId]: merged }))
+    setRatingsError('')
+
+    const { data: session } = await supabase.auth.getUser()
+    const userId = session.user?.id
+    if (!userId) { setRatingsError('Du verkar inte vara inloggad längre — ladda om sidan.'); return }
+
+    const { error } = await supabase.from('voice_ratings').upsert({
+      user_id: userId,
+      voice_id: voiceId,
+      rating: merged.rating,
+      note: merged.note?.trim() ? merged.note.trim() : null,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,voice_id' })
+
+    if (error) {
+      if (isMissingTable(error)) setRatingsSupported(false)
+      else {
+        setRatingsError(`Betyget kunde inte sparas: ${error.message}`)
+        loadVoiceRatings()
+      }
+    }
+  }
+
   async function importSwedishVoice(v: SharedSwedishVoice) {
     setImportingVoiceId(v.voiceId)
     setImportError('')
@@ -457,6 +530,7 @@ export default function AgentDetailPage() {
   const callLogsFetchedRef = useRef(false)
   const billingFetchedRef = useRef(false)
   const voicesFetchedRef = useRef(false)
+  const ratingsFetchedRef = useRef(false)
   const libraryFetchedRef = useRef(false)
 
   useEffect(() => {
@@ -482,7 +556,11 @@ export default function AgentDetailPage() {
       libraryFetchedRef.current = true
       loadSwedishLibrary()
     }
-  }, [activeTab, id, loadPhoneNumbers, loadCallLogs, loadBillingStats, loadElevenLabsVoices, loadSwedishLibrary])
+    if (activeTab === 'settings' && !ratingsFetchedRef.current) {
+      ratingsFetchedRef.current = true
+      loadVoiceRatings()
+    }
+  }, [activeTab, id, loadPhoneNumbers, loadCallLogs, loadBillingStats, loadElevenLabsVoices, loadSwedishLibrary, loadVoiceRatings])
 
   // ── Save prompt tab ────────────────────────────────────────────────────
   async function savePrompt() {
@@ -1443,9 +1521,15 @@ export default function AgentDetailPage() {
               <>
                 {(() => {
                   const q = voiceFilter.trim().toLowerCase()
-                  const matches = elevenLabsVoices.filter(v =>
-                    !q || [v.name, v.accent, v.language === 'sv' ? 'svenska' : 'engelska']
-                      .some(field => field?.toLowerCase().includes(q)))
+                  const summary = ratingSummary(voiceRatings)
+                  const matches = elevenLabsVoices.filter(v => {
+                    if (q && ![v.name, v.accent, v.language === 'sv' ? 'svenska' : 'engelska']
+                      .some(field => field?.toLowerCase().includes(q))) return false
+                    // Favoritfiltret finns för att slippa bläddra igenom alla
+                    // 55 varje gång en ny kund ska få en röst.
+                    if (onlyFavourites && !isFavourite(voiceRatings[v.voiceId])) return false
+                    return true
+                  })
                   const swedish = elevenLabsVoices.filter(v => v.language === 'sv').length
                   // Vald röst måste alltid finnas bland alternativen, annars
                   // visar rullgardinen tomt när filtret inte matchar den.
@@ -1456,6 +1540,49 @@ export default function AgentDetailPage() {
 
                   return (
                     <>
+                      {ratingsSupported && elevenLabsVoices.length > 12 && (
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <span className="text-[11px]" style={{ color: 'var(--slate)' }}>Sortera:</span>
+                          <div role="group" aria-label="Sortera rösterna" className="flex gap-1 rounded-lg p-0.5"
+                            style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)' }}>
+                            {(Object.keys(SORT_LABELS) as VoiceSortKey[]).map(k => (
+                              <button
+                                key={k}
+                                type="button"
+                                aria-pressed={voiceSort === k}
+                                onClick={() => setVoiceSort(k)}
+                                className="rounded text-[11px] font-semibold"
+                                style={{
+                                  padding: '4px 9px', cursor: 'pointer', border: 'none',
+                                  backgroundColor: voiceSort === k ? 'rgba(168,85,247,0.22)' : 'transparent',
+                                  color: voiceSort === k ? 'var(--cream)' : 'var(--slate)',
+                                }}
+                              >
+                                {SORT_LABELS[k]}
+                              </button>
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            aria-pressed={onlyFavourites}
+                            onClick={() => setOnlyFavourites(v => !v)}
+                            disabled={summary.favourites === 0}
+                            title={summary.favourites === 0
+                              ? `Inga favoriter än — ge en röst ${FAVOURITE_FROM} stjärnor eller mer`
+                              : `Visa bara mina ${summary.favourites} favoriter`}
+                            className="rounded-lg text-[11px] font-semibold disabled:opacity-40"
+                            style={{
+                              padding: '5px 10px',
+                              cursor: summary.favourites === 0 ? 'not-allowed' : 'pointer',
+                              backgroundColor: onlyFavourites ? 'rgba(251,191,36,0.18)' : 'rgba(255,255,255,0.05)',
+                              border: `1px solid ${onlyFavourites ? 'rgba(251,191,36,0.45)' : 'rgba(255,255,255,0.1)'}`,
+                              color: onlyFavourites ? 'var(--gold, #fbbf24)' : 'var(--slate)',
+                            }}
+                          >
+                            ★ Mina favoriter{summary.favourites > 0 ? ` (${summary.favourites})` : ''}
+                          </button>
+                        </div>
+                      )}
                       {elevenLabsVoices.length > 12 && (
                         <input
                           value={voiceFilter}
@@ -1470,24 +1597,49 @@ export default function AgentDetailPage() {
                         onChange={setSettingsVoiceId}
                         className="w-full"
                         style={inputStyle}
-                        placeholder={shown.length ? '— Välj röst —' : 'Ingen röst matchar sökningen'}
-                        options={[...shown]
-                          // Swedish-tagged voices first — most premade voices in a
-                          // fresh account are English-trained and can speak Swedish
-                          // via the multilingual model, but with an English accent.
-                          .sort((a, b) => (b.language === 'sv' ? 1 : 0) - (a.language === 'sv' ? 1 : 0))
-                          .map(v => ({
-                            value: v.voiceId,
-                            label: `${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}`,
-                            accessory: <VoicePreview url={v.previewUrl} label={v.name} size={24} />,
-                          }))}
+                        placeholder={shown.length
+                          ? '— Välj röst —'
+                          : onlyFavourites ? 'Ingen favorit matchar sökningen' : 'Ingen röst matchar sökningen'}
+                        options={sortVoices(shown, voiceSort, voiceRatings)
+                          .map(v => {
+                            const r = voiceRatings[v.voiceId]
+                            return {
+                              value: v.voiceId,
+                              label: `${isFavourite(r) ? '★ ' : ''}${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}${r?.note ? ' 📝' : ''}`,
+                              // Stjärnorna först, lyssna-knappen sist och
+                              // oförändrad — man lyssnar och sätter betyg i
+                              // samma rörelse.
+                              accessory: (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                                  {ratingsSupported && (
+                                    <StarRating
+                                      value={r?.rating ?? null}
+                                      onChange={next => saveVoiceRating(v.voiceId, { rating: next })}
+                                      label={v.name}
+                                    />
+                                  )}
+                                  <VoicePreview url={v.previewUrl} label={v.name} size={24} />
+                                </span>
+                              ),
+                            }
+                          })}
                       />
                       <p className="text-[11px] mt-1.5" style={{ color: 'var(--slate)' }}>
-                        {q
+                        {q || onlyFavourites
                           ? `${shown.length} av ${elevenLabsVoices.length} röster matchar`
                           : `${elevenLabsVoices.length} röster i kontot — ${swedish} svenska`}
                         {' · tryck ▶ för att lyssna'}
+                        {ratingsSupported && ', ★ för att betygsätta'}
+                        {ratingsSupported && summary.rated > 0 && ` · ${summary.rated} betygsatta`}
                       </p>
+                      {ratingsError && (
+                        <p className="text-[11px] mt-1" style={{ color: '#ef4444' }}>⚠️ {ratingsError}</p>
+                      )}
+                      {!ratingsSupported && (
+                        <p className="text-[11px] mt-1" style={{ color: 'var(--gold)' }}>
+                          ⚠️ Kör migration 034_voice_ratings.sql i Supabase SQL Editor för att kunna betygsätta röster.
+                        </p>
+                      )}
                     </>
                   )
                 })()}
@@ -1511,6 +1663,65 @@ export default function AgentDetailPage() {
               ElevenLabs-agent har &quot;Allow override&quot; aktiverat för <strong>Voice</strong> (inte bara
               System prompt och First message) — annars ignoreras vårt röstval av ElevenLabs oavsett vad vi skickar.
             </p>
+
+            {/* Mina egna lyssningsbetyg (034). Anteckningarna bor här och inte i
+                rullgardinen: ett textfält inuti en lista som stängs vid klick
+                utanför är obrukbart att skriva i. */}
+            {ratingsSupported && elevenLabsVoices.length > 0 && (() => {
+              const summary = ratingSummary(voiceRatings)
+              const judged = elevenLabsVoices.filter(v => {
+                const r = voiceRatings[v.voiceId]
+                return r && (r.rating != null || (r.note ?? '').trim())
+              })
+              // Den valda rösten läggs först även om den är obetygsatt, så det
+              // går att anteckna om den man just lyssnat på utan att leta.
+              const selected = elevenLabsVoices.find(v => v.voiceId === settingsVoiceId)
+              const rows = selected && !judged.some(v => v.voiceId === selected.voiceId)
+                ? [selected, ...sortVoices(judged, 'rating', voiceRatings)]
+                : sortVoices(judged, 'rating', voiceRatings)
+
+              return (
+                <div className="mt-4 pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+                  <button
+                    onClick={() => setShowRatingsPanel(v => !v)}
+                    className="text-xs font-semibold flex items-center gap-1.5"
+                    style={{ color: 'var(--brick)' }}
+                  >
+                    {showRatingsPanel ? '▾' : '▸'} ★ Mina betyg och anteckningar
+                    <span style={{ color: 'var(--slate)', fontWeight: 400 }}>
+                      ({summary.rated} betygsatta, {summary.favourites} favoriter, {summary.noted} med anteckning)
+                    </span>
+                  </button>
+
+                  {showRatingsPanel && (
+                    <div className="mt-3 space-y-2">
+                      <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                        Dina egna lyssningsintryck, sparade per röst och bara synliga för dig. De följer rösten,
+                        inte kunden — så bedömningen finns kvar nästa gång du ska välja röst åt någon annan.
+                        Favorit betyder {FAVOURITE_FROM} stjärnor eller mer.
+                      </p>
+                      {rows.length === 0 ? (
+                        <p className="text-xs" style={{ color: 'var(--slate)' }}>
+                          Inga betyg än. Tryck ▶ i listan ovan för att lyssna och ★ för att sätta betyg.
+                        </p>
+                      ) : rows.map(v => (
+                        <VoiceNoteRow
+                          key={v.voiceId}
+                          name={v.name}
+                          accent={v.accent}
+                          previewUrl={v.previewUrl}
+                          rating={voiceRatings[v.voiceId]?.rating ?? null}
+                          note={voiceRatings[v.voiceId]?.note ?? ''}
+                          isCurrent={v.voiceId === settingsVoiceId}
+                          onRating={next => saveVoiceRating(v.voiceId, { rating: next })}
+                          onNote={text => saveVoiceRating(v.voiceId, { note: text })}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Import genuine Swedish voices from ElevenLabs' shared Voice Library */}
             <div className="mt-4 pt-4 border-t" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
@@ -2152,6 +2363,69 @@ function SaveBar({ saving, saved, error, onSave }: {
       >
         {saving ? '⟳ Sparar…' : 'Spara ändringar'}
       </button>
+    </div>
+  )
+}
+
+/**
+ * En rad i betygspanelen: lyssna, betygsätt, anteckna.
+ *
+ * Anteckningen sparas när fältet tappar fokus, inte per tangenttryck — annars
+ * blir det en databasskrivning per bokstav. Utkastet hålls lokalt så texten
+ * inte hoppar medan man skriver.
+ */
+function VoiceNoteRow({
+  name, accent, previewUrl, rating, note, isCurrent, onRating, onNote,
+}: {
+  name: string
+  accent?: string | null
+  previewUrl?: string | null
+  rating: number | null
+  note: string
+  isCurrent: boolean
+  onRating: (next: number | null) => void
+  onNote: (text: string) => void
+}) {
+  const [draft, setDraft] = useState(note)
+  // Hämtas betygen om utifrån ska fältet följa med, men inte medan man skriver.
+  useEffect(() => { setDraft(note) }, [note])
+
+  return (
+    <div
+      className="p-2.5 rounded-lg"
+      style={{
+        backgroundColor: isCurrent ? 'rgba(168,85,247,0.10)' : 'rgba(255,255,255,0.04)',
+        border: `1px solid ${isCurrent ? 'rgba(168,85,247,0.3)' : 'transparent'}`,
+      }}
+    >
+      <div className="flex items-center gap-2.5">
+        <VoicePreview url={previewUrl} label={name} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-medium truncate" style={{ color: 'var(--cream)' }}>
+            {name}
+            {isCurrent && <span style={{ color: 'var(--brick)', fontWeight: 600 }}> · vald</span>}
+          </p>
+          <p className="text-[10px]" style={{ color: 'var(--slate)' }}>{accent ?? 'svenska'}</p>
+        </div>
+        <StarRating value={rating} onChange={onRating} label={name} size={15} />
+      </div>
+      <textarea
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={() => { if (draft.trim() !== (note ?? '').trim()) onNote(draft) }}
+        placeholder="Din anteckning — t.ex. &quot;låter lite robotisk&quot; eller &quot;professionell ton, bra för Bentus&quot;"
+        aria-label={`Anteckning om ${name}`}
+        rows={2}
+        className="w-full mt-2 rounded-lg text-xs"
+        style={{
+          backgroundColor: 'rgba(0,0,0,0.25)',
+          border: '1px solid rgba(255,255,255,0.1)',
+          color: 'var(--cream)',
+          padding: '6px 8px',
+          resize: 'vertical',
+          outline: 'none',
+        }}
+      />
     </div>
   )
 }
