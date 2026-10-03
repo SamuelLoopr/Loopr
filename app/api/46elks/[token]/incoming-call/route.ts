@@ -30,28 +30,28 @@ export const dynamic = 'force-dynamic'
 const SIP_HOST = process.env.ELEVENLABS_SIP_HOST?.trim() || 'sip.rtc.elevenlabs.io:5060'
 
 /**
- * UDP, inte TCP — bytt 2026-10-03 efter mätning.
+ * TCP. Både alternativen är uppmätta på riktiga samtal 2026-10-03 — ändra inte
+ * utan att läsa det här.
  *
- * Först valdes TCP, eftersom ElevenLabs märker UDP som experimentellt. Men med
- * TCP kopplade samtalen upp fint och vägrade läggas på: när agenten anropade
- * end_call avslutades konversationen hos ElevenLabs, medan telefonlinjen låg
- * kvar och den som ringt satt i tystnad tills hen la på själv.
+ *   TCP   uppkoppling OK, ljud OK i båda riktningar, men ElevenLabs SIP BYE
+ *         tappas: när agenten anropar end_call avslutas konversationen medan
+ *         telefonlinjen ligger kvar. Uppmätt på samma samtal från båda hållen:
+ *           agenten la på   46elks-ben 56 s  mot konversation 37 s  → 19 s kvar
+ *           kunden la på    46elks-ben 13 s  mot konversation 13 s  → lika
  *
- * Uppmätt på 46elks och ElevenLabs sida av samma samtal:
+ *   UDP   VÄRRE. 46elks markerar benet state=failed utan längd och utan
+ *         kostnad, och ElevenLabs får inget ljud från den som ringer —
+ *         agenten pratar i tomma intet och frågar "är du kvar i luren?" tills
+ *         den avslutar själv. Två samtal, 37 s och 41 s, båda likadana.
+ *         Mediasessionen etableras alltså inte, trots att signalleringen
+ *         kommer så långt att en konversation startar.
  *
- *   agenten lade på   SIP-benet 56 s  mot konversationens 37 s  → 19 s kvar
- *   kunden lade på    SIP-benet 13 s  mot konversationens 13 s  → exakt lika
- *
- * Uppkopplingen fungerar alltså, och nedkopplingen fungerar när den kommer
- * från kundens sida. Det som tappas är ElevenLabs SIP BYE — alltså ett
- * meddelande MITT i en etablerad dialog, vilket är precis vad som försvinner
- * om TCP-anslutningen inte hålls öppen åt rätt håll. UDP har ingen sådan
- * anslutning att tappa, och är dessutom 46elks standard.
- *
- * 46elks stöder bara tcp och udp i sin SIP-URI, inte TLS, så det finns inget
- * tredje alternativ att prova.
+ * TCP är därmed det enda läget där samtalet faktiskt fungerar. Att linjen
+ * ligger kvar efter agentens farväl är en känd kvarvarande defekt, inte något
+ * som blir bättre av att byta transport. 46elks erbjuder inte TLS i sin
+ * SIP-URI, så det finns inget tredje alternativ.
  */
-const SIP_TRANSPORT = process.env.ELEVENLABS_SIP_TRANSPORT?.trim() || 'udp'
+const SIP_TRANSPORT = process.env.ELEVENLABS_SIP_TRANSPORT?.trim() || 'tcp'
 
 /** Lägg på utan att koppla. 46elks docs/voice-hangup: "busy", "reject" eller "404". */
 const UNKNOWN_NUMBER = { hangup: '404' }
