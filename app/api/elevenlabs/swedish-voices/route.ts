@@ -37,6 +37,8 @@ interface SharedVoice {
   preview_url?: string
   rate?: number
   is_added_by_user?: boolean
+  /** Går inte att använda för agenter — se kommentaren vid mappningen nedan. */
+  live_moderation_enabled?: boolean
 }
 
 const isSwedish = (v: SharedVoice) => v.locale === 'sv-SE' || v.language === 'sv'
@@ -97,6 +99,13 @@ export async function GET() {
       accent: v.accent ?? null,
       previewUrl: v.preview_url ?? null,
       alreadyAdded: v.is_added_by_user === true,
+      /**
+       * Röster med live moderation kan inte användas för agenter: ElevenLabs
+       * stänger konversationen med close 1008. Fältet följer med redan här,
+       * på biblioteksnivå, så en sådan röst kan flaggas INNAN den importeras
+       * — annars tar den en plats i kontot utan att kunna användas.
+       */
+      liveModerationEnabled: v.live_moderation_enabled === true,
     }))
 
   return NextResponse.json({

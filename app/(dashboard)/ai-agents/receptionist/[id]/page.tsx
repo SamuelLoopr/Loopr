@@ -84,6 +84,12 @@ interface ElevenLabsVoice {
   accent: string | null
   /** Röstprov från ElevenLabs — spelas upp direkt i listan. */
   previewUrl: string | null
+  /**
+   * Går inte att använda för samtal. ElevenLabs stänger konversationen med
+   * close 1008: "Voices with live moderation enabled cannot be used for
+   * agents". Förhandslyssningen fungerar ändå, så det måste synas här.
+   */
+  liveModerationEnabled?: boolean
 }
 
 interface SharedSwedishVoice {
@@ -93,6 +99,8 @@ interface SharedSwedishVoice {
   gender: string | null
   accent: string | null
   previewUrl: string | null
+  /** Som ovan — flaggas redan i biblioteket så den inte importeras i onödan. */
+  liveModerationEnabled?: boolean
 }
 
 // A real ElevenLabs voice ID is a 20-char alphanumeric string, e.g.
@@ -1013,6 +1021,19 @@ export default function AgentDetailPage() {
       // Surface it up front instead of failing silently — an agent saved
       // before this fix (or with the field cleared) can still have a
       // non-ID value like "maja" sitting in voice_id.
+      // Rösten med live moderation skulle få ElevenLabs att stänga samtalet
+      // direkt (close 1008). Att avbryta här ger ett begripligt besked i
+      // stället för en krasch som ser ut som ett nätverksfel.
+      const moderated = elevenLabsVoices.find(v => v.voiceId === data.voiceId && v.liveModerationEnabled)
+      if (moderated) {
+        setCallStatus('idle')
+        setCallError(
+          `Rösten "${moderated.name}" har live moderation påslaget hos ElevenLabs och kan inte användas för ` +
+          'samtal — ElevenLabs avvisar den och stänger konversationen direkt. Välj en röst utan 🚫 under Inställningar.',
+        )
+        return
+      }
+
       const voiceIdValid = !!data.voiceId && looksLikeElevenLabsVoiceId(data.voiceId)
       if (!data.voiceId) {
         setVoiceAppliedWarning('Ingen röst vald i Inställningar — agentens standardröst på ElevenLabs används.')
@@ -1605,7 +1626,9 @@ export default function AgentDetailPage() {
                             const r = voiceRatings[v.voiceId]
                             return {
                               value: v.voiceId,
-                              label: `${isFavourite(r) ? '★ ' : ''}${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}${r?.note ? ' 📝' : ''}`,
+                              // 🚫 först av allt: att rösten inte går att
+                              // använda är viktigare än betyg och dialekt.
+                              label: `${v.liveModerationEnabled ? '🚫 ' : ''}${isFavourite(r) ? '★ ' : ''}${v.language === 'sv' ? '🇸🇪 ' : ''}${v.name}${v.accent ? ` (${v.accent})` : ''}${r?.note ? ' 📝' : ''}`,
                               // Stjärnorna först, lyssna-knappen sist och
                               // oförändrad — man lyssnar och sätter betyg i
                               // samma rörelse.
@@ -1631,6 +1654,8 @@ export default function AgentDetailPage() {
                         {' · tryck ▶ för att lyssna'}
                         {ratingsSupported && ', ★ för att betygsätta'}
                         {ratingsSupported && summary.rated > 0 && ` · ${summary.rated} betygsatta`}
+                        {elevenLabsVoices.some(v => v.liveModerationEnabled) &&
+                          ` · 🚫 = kan inte användas för samtal (${elevenLabsVoices.filter(v => v.liveModerationEnabled).length} st)`}
                       </p>
                       {ratingsError && (
                         <p className="text-[11px] mt-1" style={{ color: '#ef4444' }}>⚠️ {ratingsError}</p>
@@ -1651,6 +1676,26 @@ export default function AgentDetailPage() {
                 )}
               </>
             )}
+            {/* Hård varning när en röst med live moderation är vald. Den
+                fungerar i förhandslyssningen men stänger varje samtal, så den
+                måste flaggas tydligare än med bara ikonen i listan. */}
+            {(() => {
+              const picked = elevenLabsVoices.find(v => v.voiceId === settingsVoiceId)
+              if (!picked?.liveModerationEnabled) return null
+              return (
+                <div className="mt-2 p-2.5 rounded-lg" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.35)' }}>
+                  <p className="text-xs font-semibold" style={{ color: '#ef4444' }}>
+                    🚫 &quot;{picked.name}&quot; kan inte användas för samtal
+                  </p>
+                  <p className="text-[11px] mt-1" style={{ color: 'var(--slate)' }}>
+                    Rösten har live moderation påslaget hos ElevenLabs, och sådana röster avvisas för agenter —
+                    varje samtal stängs direkt med felet <em>&quot;Voices with live moderation enabled cannot be
+                    used for agents&quot;</em>. Att förhandslyssningen fungerar säger ingenting: ▶ spelar en
+                    färdig ljudfil och rör inte agenten. Välj en röst utan 🚫 i listan.
+                  </p>
+                </div>
+              )
+            })()}
             {settingsVoiceId && !looksLikeElevenLabsVoiceId(settingsVoiceId) && (
               <p className="text-xs mt-1.5" style={{ color: '#ef4444' }}>
                 ⚠️ &quot;{settingsVoiceId}&quot; ser inte ut som ett giltigt ElevenLabs röst-ID (bör vara ~20 tecken).
@@ -1758,12 +1803,19 @@ export default function AgentDetailPage() {
                               <VoicePreview url={v.previewUrl} label={v.name} />
                               <div className="min-w-0">
                                 <p className="text-xs font-medium truncate" style={{ color: 'var(--cream)' }}>{v.name}</p>
-                                <p className="text-[10px]" style={{ color: 'var(--slate)' }}>{v.accent ?? 'svenska'}{v.gender ? ` · ${v.gender}` : ''}</p>
+                                <p className="text-[10px]" style={{ color: v.liveModerationEnabled ? '#ef4444' : 'var(--slate)' }}>
+                                  {v.liveModerationEnabled
+                                    ? '🚫 live moderation — går inte att använda för samtal'
+                                    : `${v.accent ?? 'svenska'}${v.gender ? ` · ${v.gender}` : ''}`}
+                                </p>
                               </div>
                             </div>
                             <button
                               onClick={() => importSwedishVoice(v)}
-                              disabled={importingVoiceId === v.voiceId}
+                              disabled={importingVoiceId === v.voiceId || v.liveModerationEnabled === true}
+                              title={v.liveModerationEnabled
+                                ? 'Rösten har live moderation och kan inte användas för samtal — ingen mening att importera den'
+                                : undefined}
                               className="shrink-0 text-xs px-3 py-1.5 rounded-lg font-semibold transition-all disabled:opacity-40"
                               style={{ backgroundColor: 'rgba(74,222,128,0.15)', color: '#4ade80', border: '1px solid rgba(74,222,128,0.3)' }}
                             >

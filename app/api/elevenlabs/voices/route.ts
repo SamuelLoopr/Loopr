@@ -24,12 +24,31 @@ export async function GET() {
   // preview_url finns på varje röst och är publikt hämtbar (200 audio/mpeg utan
   // API-nyckel, CORS *), så röstväljaren kan spela upp den direkt i webbläsaren.
   const voices = (data.voices || []).map(
-    (v: { voice_id: string; name: string; labels?: Record<string, string>; preview_url?: string }) => ({
+    (v: {
+      voice_id: string
+      name: string
+      labels?: Record<string, string>
+      preview_url?: string
+      sharing?: { live_moderation_enabled?: boolean } | null
+    }) => ({
       voiceId: v.voice_id,
       name: v.name,
       language: v.labels?.language ?? null,
       accent: v.labels?.accent ?? null,
       previewUrl: v.preview_url ?? null,
+      /**
+       * Röster med live moderation GÅR INTE att använda för agenter.
+       *
+       * ElevenLabs stänger konversationen direkt med close 1008 och texten
+       * "Voices with live moderation enabled cannot be used for agents".
+       * Uppmätt 2026-10-03 på sex röster, tre modererade och tre rena: fältet
+       * förutsade utfallet varje gång.
+       *
+       * Förhandslyssningen fungerar ändå — preview_url är en färdig ljudfil
+       * och rör inte agenten — så felet går inte att upptäcka genom att
+       * lyssna. Det måste flaggas i gränssnittet i stället.
+       */
+      liveModerationEnabled: v.sharing?.live_moderation_enabled === true,
     }),
   )
 
