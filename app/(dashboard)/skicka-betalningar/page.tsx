@@ -182,7 +182,12 @@ function SendInvoice({ agents, onSent }: { agents: Agent[]; onSent: (inv: Invoic
         client_name: clientName.trim(),
         amount: Number(amount),
         description: description.trim() || null,
-        status: 'sent',
+        // Utkast, inte utfärdad. Migration 039 gör en utfärdad faktura
+        // oföränderlig i samma ögonblick den skapas, och en faktura som skapas
+        // här har varken fakturanummer eller partsuppgifter — den hade blivit
+        // permanent låst och ofullständig. Utfärdandet sker på sidan
+        // "Avtal & Fakturor", där numret delas ut.
+        status: 'draft',
         is_recurring: isRecurring,
       })
       .select()
@@ -268,7 +273,7 @@ function SendInvoice({ agents, onSent }: { agents: Agent[]; onSent: (inv: Invoic
           opacity: sending ? 0.6 : 1,
         }}
       >
-        {success ? '✓ Faktura sparad' : sending ? 'Sparar...' : '📤 Skicka faktura'}
+        {success ? '✓ Utkast sparat' : sending ? 'Sparar...' : '💾 Spara som utkast'}
       </button>
     </Panel>
   )
