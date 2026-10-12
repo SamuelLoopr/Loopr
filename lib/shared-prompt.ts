@@ -24,14 +24,14 @@ const LANGUAGE_SV =
  * alla kunder — en receptionist som låter som en uppläsare gör det lika illa
  * åt vem som helst.
  *
- * ── EN RAD ÄR KUNDSPECIFIK OCH MÅSTE ÄNDRAS FÖRE KUND NUMMER TVÅ ──────────
- * Sista punkten namnger Bentus AB. Så länge Bentus är enda kunden är det
- * korrekt, men nästa kunds agent skulle presentera sig som Bentus
- * receptionist — ett sakfel mot en främmande uppringare. Byt då raden till
- * företagsneutral text ("…att du är en AI-receptionist och inte en
- * människa"); företagsnamnet finns redan i kundens egen prompt_text.
+ * Sista punkten namnger företaget, och namnet kommer från agentens
+ * business_name — inte hårdkodat. Se speakingSv() nedan.
  */
-const SPEAKING_SV = `SÅ PRATAR DU (gäller alltid)
+function speakingSv(company: string | null): string {
+  const human = company
+    ? `- Om någon frågar om du är en människa, säg ärligt att du är en AI-receptionist för ${company}.`
+    : `- Om någon frågar om du är en människa, säg ärligt att du är en AI-receptionist.`
+  return `SÅ PRATAR DU (gäller alltid)
 - Prata som en vänlig person på ett hantverksföretags kontor, inte som en uppläsare. Vardaglig svenska och korta meningar.
 - Undvik skriftspråk och byråkratiska ord ("härmed", "vänligen", "tillhandahålla"). Säg "kan du berätta lite mer?" i stället för "vänligen specificera".
 - Bekräfta kort innan du svarar: "Okej", "Just det", "Aha", "Ja, absolut". Variera dem och upprepa inte samma två gånger i rad.
@@ -39,7 +39,7 @@ const SPEAKING_SV = `SÅ PRATAR DU (gäller alltid)
 - Var lugn och varm, inte överdrivet glad eller entusiastisk.
 - Om personen verkar stressad eller upprörd: sakta ner, säg att du förstår, och ställ en enkel fråga.
 - Om du inte hörde eller förstod: "Förlåt, hann inte riktigt med. Kan du säga det en gång till?"
-- Om någon frågar om du är en människa, säg ärligt att du är en AI-receptionist för Bentus AB.
+${human}
 
 UNDVIK UPPREPNINGAR
 - Upprepa inte vad personen precis sagt och återge inte hela svaret tillbaka. Bekräfta kort och gå vidare.
@@ -48,6 +48,26 @@ UNDVIK UPPREPNINGAR
 - Sammanfatta ärendet högst en gång, precis före avslutet.
 - Variera dina bekräftelser och använd inte samma ord i två svar i rad.
 - Håll varje svar till en eller två korta meningar.`
+}
+
+/**
+ * Det enda anropsstället som inte skickar business_name.
+ *
+ * ── ÖVERGÅNGSLÖSNING, TA BORT NÄR conversation-init SKICKAR NAMNET ─────────
+ * app/api/webhooks/elevenlabs/conversation-init (SIP-vägen) anropar
+ * buildSystemPrompt utan businessName, och den routen fick inte röras när
+ * hårdkodningen togs bort 2026-10-12. För att Bentus SIP-prompt skulle bli
+ * tecken-identisk måste ett UTELÄMNAT namn därför fortfarande ge "Bentus AB".
+ *
+ * Det är bara säkert för att Bentus är den enda kunden på SIP-vägen i dag.
+ * Rättelsen är en rad i conversation-init: hämta business_name och skicka med
+ * det. Därefter ska den här konstanten och undefined-fallet bort.
+ *
+ * Skillnaden mot ett TOMT namn är avsiktlig: en route som uppdaterats och
+ * skickar null (agenten saknar business_name) får den generiska texten, aldrig
+ * Bentus. Bara en route som inte uppdaterats alls får det här värdet.
+ */
+export const LEGACY_DEFAULT_BUSINESS_NAME = 'Bentus AB'
 
 /** Motsvarigheten på engelska. Översatt från den svenska texten ovan. */
 const SPEAKING_EN = `HOW YOU SPEAK (always)
@@ -132,6 +152,15 @@ export interface PromptOptions {
    * linjen ligger kvar. Se END_CALL_SV_NO_HANGUP.
    */
   canEndCall?: boolean
+  /**
+   * agents.business_name. Står i raden om att vara en AI-receptionist.
+   *
+   *   sträng      används som det är
+   *   null / ''   generisk text utan företagsnamn — aldrig ett annat företags
+   *   utelämnat   LEGACY_DEFAULT_BUSINESS_NAME, bara för SIP-routen som ännu
+   *               inte skickar namnet. Se kommentaren vid konstanten.
+   */
+  businessName?: string | null
 }
 
 /**
@@ -143,15 +172,18 @@ export interface PromptOptions {
 export function buildSystemPrompt(
   basePrompt: string,
   language: PromptLanguage,
-  { canEndCall = true }: PromptOptions = {},
+  { canEndCall = true, businessName }: PromptOptions = {},
 ): string {
+  const company = businessName === undefined
+    ? LEGACY_DEFAULT_BUSINESS_NAME
+    : (businessName?.trim() || null)
   // Standardvärdet true gör att alla befintliga anropsställen beter sig exakt
   // som förut — bara den som uttryckligen säger annat får den andra texten.
   const endCall = language === 'sv'
     ? (canEndCall ? END_CALL_SV : END_CALL_SV_NO_HANGUP)
     : (canEndCall ? END_CALL_EN : END_CALL_EN_NO_HANGUP)
   const language_ = language === 'sv' ? LANGUAGE_SV : LANGUAGE_EN
-  const speaking = language === 'sv' ? SPEAKING_SV : SPEAKING_EN
+  const speaking = language === 'sv' ? speakingSv(company) : SPEAKING_EN
   // Språkregeln först, sedan hur rösten ska låta, sedan mekaniken, sist
   // kundens egen text. Reglerna före så de gäller även när kundtexten är lång.
   return `${language_}\n\n${speaking}\n\n${endCall}\n\n${basePrompt}`

@@ -71,7 +71,9 @@ export async function POST() {
     signedUrl: signed_url,
     // Samma gemensamma regler som kundernas agenter, inklusive att faktiskt
     // lägga på när den som ringer tackar för sig.
-    prompt: buildSystemPrompt(DEMO_PROMPT, 'sv'),
+    // Utan namnet hade demot fått övergångsvärdet och sagt att det jobbar för
+    // Bentus AB — vilket det gjorde mellan 2026-10-04 och 2026-10-12.
+    prompt: buildSystemPrompt(DEMO_PROMPT, 'sv', { businessName: 'Loopr' }),
     welcomeMessage: DEMO_WELCOME,
     language: 'sv',
     voiceId: DEMO_VOICE_ID,

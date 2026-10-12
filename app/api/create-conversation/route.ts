@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
   const supabase = await createSupabaseServerClient()
   const { data: agent, error: dbError } = await supabase
     .from('agents')
-    .select('prompt_text, welcome_message, language, voice_id')
+    .select('prompt_text, welcome_message, language, voice_id, business_name')
     .eq('id', agentId)
     .single()
 
@@ -60,7 +60,9 @@ export async function POST(req: NextRequest) {
   const { signed_url } = await elRes.json()
 
   const language = agent.language === 'en' ? 'en' : 'sv'
-  const prompt = buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language)
+  const prompt = buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language, {
+    businessName: agent.business_name ?? null,
+  })
   const welcomeMessage = agent.welcome_message || DEFAULT_WELCOME[language]
 
   // Fetched fresh from Supabase on every call (no caching). Logged so a

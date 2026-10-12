@@ -127,7 +127,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ sh
 
   return NextResponse.json({
     signedUrl: signed_url,
-    prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language),
+    prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language, {
+      businessName: agent.business_name ?? null,
+    }),
     welcomeMessage: agent.welcome_message || DEFAULT_WELCOME[language],
     language,
     voiceId: agent.voice_id || '',

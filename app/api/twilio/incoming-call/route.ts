@@ -166,7 +166,7 @@ export async function POST(req: NextRequest) {
     // ── Resolve the agent ─────────────────────────────────────────────────
     const { data: agent, error: agentErr } = await supabase
       .from('agents')
-      .select('id, name, status, prompt_text, welcome_message, language, voice_id, voice_stability, voice_similarity_boost, voice_speed')
+      .select('id, name, business_name, status, prompt_text, welcome_message, language, voice_id, voice_stability, voice_similarity_boost, voice_speed')
       .eq('id', agentId)
       .maybeSingle()
 
@@ -210,7 +210,9 @@ export async function POST(req: NextRequest) {
     // att lägga på nådde skarpa samtal — bara testsamtalen i webbläsaren.
     const agentOverride: Record<string, unknown> = { language }
     agentOverride.prompt = {
-      prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language),
+      prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language, {
+        businessName: agent.business_name ?? null,
+      }),
     }
     agentOverride.first_message = agent.welcome_message || DEFAULT_WELCOME[language]
 
