@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, use, useRef } from 'react'
+import { useState, useEffect, use, useRef, useCallback } from 'react'
 import LooprLogo from '@/app/components/LooprLogo'
 import Panel from '@/app/components/Panel'
 import VoiceDemo from '@/app/components/VoiceDemo'
@@ -10,7 +10,8 @@ import BenefitCards from '@/app/components/BenefitCards'
 import CallList from '@/app/components/CallList'
 import type { PublicCallsResponse } from '@/lib/public-calls'
 import Section from './Section'
-import ClientView, { type ClientPageData } from './ClientView'
+import ClientView, { ClientSkeleton, type CallsState, type ClientPageData } from './ClientView'
+import { looksLikeClientMode, rememberClientMode } from './bos/visit'
 
 // ─── Types (mirror /api/public-agent/[shareId]/master) ────────────────────────
 // Two shapes: the sales demo below, and a client's BOS page (ClientView.tsx)
@@ -89,25 +90,40 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
   // take a few seconds — the rest of the page should not wait for that. Stays
   // null (section hidden) on a prospect link with no calls, or on any error.
   const [calls, setCalls] = useState<PublicCallsResponse | null>(null)
+  // Only the client's BOS page shows this: a failed fetch there is an error with
+  // a retry button, where the sales demo simply leaves the section out.
+  const [callsState, setCallsState] = useState<CallsState>('loading')
+  // Known before the payload arrives when this browser has opened the link
+  // before — the loading screen can then already look like the client's page.
+  // Read after hydration: the server has no localStorage, and reading it during
+  // the first render would make the two disagree.
+  const [clientHint, setClientHint] = useState(false)
+  useEffect(() => { setClientHint(looksLikeClientMode(shareId)) }, [shareId])
 
   useEffect(() => {
     fetch(`/api/public-agent/${shareId}/master`)
       .then(res => res.json().then(body => ({ ok: res.ok, body })))
       .then(({ ok, body }) => {
         if (!ok) { setNotFound(true); return }
+        rememberClientMode(shareId, body?.mode === 'client')
         setData(body)
       })
       .catch(() => setNotFound(true))
   }, [shareId])
 
-  useEffect(() => {
-    let cancelled = false
-    fetch(`/api/public-agent/${shareId}/calls`)
-      .then(res => (res.ok ? res.json() : null))
-      .then((body: PublicCallsResponse | null) => { if (!cancelled && body) setCalls(body) })
-      .catch(() => { /* the section simply stays hidden */ })
-    return () => { cancelled = true }
+  const loadCalls = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/public-agent/${shareId}/calls`, { cache: 'no-store' })
+      const body: PublicCallsResponse | null = res.ok ? await res.json() : null
+      if (!body) { setCallsState('error'); return }
+      setCalls(body)
+      setCallsState('ready')
+    } catch {
+      setCallsState('error')
+    }
   }, [shareId])
+
+  useEffect(() => { void loadCalls() }, [loadCalls])
 
   useEffect(() => {
     let cancelled = false
@@ -156,6 +172,7 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
   }
 
   if (!data) {
+    if (clientHint) return <ClientSkeleton />
     return (
       <div style={{ ...pageStyle, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <p style={{ color: '#555' }}>Laddar…</p>
@@ -165,7 +182,7 @@ export default function MasterDemoPage({ params }: { params: Promise<{ shareId: 
 
   // A paying client's page: calls, calendar and account — none of the demo below.
   if (data.mode === 'client') {
-    return <ClientView shareId={shareId} data={data} calls={calls} />
+    return <ClientView shareId={shareId} data={data} calls={calls} callsState={callsState} onReloadCalls={loadCalls} />
   }
 
   const { business, audit, sms, proposal } = data

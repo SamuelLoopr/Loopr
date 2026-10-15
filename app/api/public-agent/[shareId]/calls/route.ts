@@ -4,6 +4,7 @@ import { countProcessingCalls, syncAgentCalls } from '@/lib/call-sync'
 import { isMissingColumn, isMissingTable } from '@/lib/db-errors'
 import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
 import { toPublicCall, type CallRow, type PublicCallsResponse } from '@/lib/public-calls'
+import { mentionsHealth } from '@/lib/call-insights'
 import { BOOKING_COLS, toPublicBooking, type BookingRow, type PublicBooking } from '@/lib/public-bookings'
 
 // Backs the calls section of the public BOS page (app/master/[shareId]): the
@@ -24,7 +25,9 @@ import { BOOKING_COLS, toPublicBooking, type BookingRow, type PublicBooking } fr
 //
 // PRIVACY. Anyone with the link can open the page, and links get forwarded.
 // Phone numbers, e-mail addresses and personnummer are redacted from
-// transcripts and summaries (lib/redact.ts) in both modes.
+// transcripts and summaries (lib/redact.ts) in both modes. A call that has no
+// summary yet shows the caller's first words instead, and those go through the
+// same health filter as the summaries first (mentionsHealth, lib/call-insights.ts).
 //
 // The caller's own number is treated differently in the two modes. On a CLIENT
 // page it is shown in full, because that page is the business's own workspace
@@ -163,6 +166,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
       toPublicCall(row, {
         revealNumber: agent.clientMode,
         bookings: bookingsByCall.get(row.id),
+        mentionsHealth,
       }),
     ),
     processing: await countProcessingCalls(supabase, agent.id),

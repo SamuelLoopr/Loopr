@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
 import { isMissingColumn } from '@/lib/db-errors'
-import { MIN_RATED, resolutionOf, type ResolutionRow } from '@/lib/resolution-rate'
+import { resolutionOf, type ResolutionRow } from '@/lib/resolution-rate'
 
 // Backs the public page (app/master/[shareId]), which has two modes:
 //
@@ -32,19 +32,19 @@ interface AuditContent {
 const DAY_MS = 86_400_000
 
 /**
- * Hur stor andel av klientens samtal receptionisten klarade själv, samma 30
- * dagar som samtalsräknaren nedan.
+ * Hur många av klientens samtal som blev ett ärende att följa upp, samma 30
+ * dagar som samtalsräknaren nedan: "X av Y samtal blev ett ärende att följa upp".
  *
- * Egen fråga eftersom räknaren är en head-count utan rader. Returnerar null
- * när migration 032 inte är körd, eller när det finns för få bedömda samtal —
- * en lösningsgrad på "100 %" räknad på ett samtal är sann men missvisande, och
- * det här är siffran klienten ska kunna lita på. Bara summor lämnar servern,
- * aldrig något per samtal.
+ * Klienten får aldrig lösningsgraden som en procentsats. En procent räknad på
+ * ett par samtal är sann men missvisande; "1 av 2 samtal" är det inte, så här
+ * finns ingen undre gräns. Egen fråga eftersom räknaren är en head-count utan
+ * rader. Null när migration 032 inte är körd eller inget samtal är bedömt än.
+ * Bara summor lämnar servern, aldrig något per samtal.
  */
-async function resolutionLast30Days(
+async function followUpLast30Days(
   supabase: ReturnType<typeof createSupabaseServiceClient>,
   agentId: string,
-): Promise<{ percent: number; solved: number; rated: number } | null> {
+): Promise<{ cases: number; calls: number } | null> {
   const { data, error } = await supabase
     .from('call_logs')
     .select('ai_resolved')
@@ -54,16 +54,16 @@ async function resolutionLast30Days(
 
   if (error) {
     if (!isMissingColumn(error)) {
-      console.error('[public-agent/master] Kunde inte läsa lösningsgrad:', error.message)
+      console.error('[public-agent/master] Kunde inte läsa uppföljningar:', error.message)
     }
     return null
   }
 
   const resolution = resolutionOf((data ?? []) as ResolutionRow[])
   const rated = resolution.solved + resolution.unsolved
-  if (rated < MIN_RATED || resolution.rate == null) return null
+  if (rated === 0) return null
 
-  return { percent: Math.floor(resolution.rate * 100), solved: resolution.solved, rated }
+  return { cases: resolution.unsolved, calls: rated }
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ shareId: string }> }) {
@@ -79,7 +79,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
 
   // ── Client mode ─────────────────────────────────────────────────────────
   if (agent.clientMode) {
-    const [phonesRes, recentRes, resolution] = await Promise.all([
+    const [phonesRes, recentRes, followUp] = await Promise.all([
       supabase.from('phone_numbers').select('phone_number').eq('agent_id', agent.id),
       supabase
         .from('call_logs')
@@ -87,7 +87,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         .eq('agent_id', agent.id)
         .eq('status', 'completed')
         .gte('created_at', new Date(Date.now() - 30 * DAY_MS).toISOString()),
-      resolutionLast30Days(supabase, agent.id),
+      followUpLast30Days(supabase, agent.id),
     ])
 
     return NextResponse.json({
@@ -100,9 +100,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         // number, not a caller's.
         phoneNumbers: (phonesRes.data ?? []).map(p => p.phone_number as string).filter(Boolean),
         callsLast30Days: recentRes.count ?? 0,
-        // Andelen samtal receptionisten klarade helt själv (032). Null när den
-        // inte går att räkna än — sidan visar då ingen rad för den.
-        resolution,
+        // Hur många samtal som blev ett ärende att följa upp (032). Null när det
+        // inte går att räkna än — sidan visar då ingen rad för det.
+        followUp,
         // The client's own address for call notifications (030). It is their
         // own setting, shown back to them so they can change it.
         notificationEmail: agent.notificationEmail,

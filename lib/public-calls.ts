@@ -87,6 +87,25 @@ export interface CallRow {
 
 const REQUESTS: readonly PublicContactRequest[] = ['meeting', 'quote', 'callback']
 
+// Vad Twilio skickar som avsändare när numret är dolt: "ANONYMOUS",
+// "RESTRICTED", "BLOCKED", "UNKNOWN" och "UNAVAILABLE" inslaget på en
+// telefonknappsats. De ser ut som nummer men går inte att ringa.
+const WITHHELD = new Set(['266696687', '7378742833', '2562533', '8656696', '86282452253'])
+
+/**
+ * Numret i ringbart skick, eller null när det inte går att ringa: saknas, är
+ * dolt ("anonymous", Twilios platshållare ovan) eller är för kort för att vara
+ * ett abonnentnummer.
+ */
+export function dialableNumber(raw: string | null | undefined): string | null {
+  const text = (raw ?? '').trim()
+  const digits = text.replace(/\D/g, '')
+  if (digits.length < 7 || WITHHELD.has(digits)) return null
+  if (text.startsWith('+')) return `+${digits}`
+  if (text.startsWith('00')) return `+${digits.slice(2)}`
+  return digits
+}
+
 export function toPublicCall(
   row: CallRow,
   opts: {
@@ -97,6 +116,13 @@ export function toPublicCall(
      */
     revealNumber: boolean
     bookings?: PublicBooking[]
+    /**
+     * Hälsofiltret från samtalsanalysen (mentionsHealth i lib/call-insights.ts).
+     * Skickas in av routen i stället för att importeras här: den här filen
+     * importeras också av sidan i webbläsaren, och lib/call-insights.ts drar
+     * med sig Anthropics SDK.
+     */
+    mentionsHealth: (text: string) => boolean
   },
 ): PublicCall {
   const transcript = parseTranscript(row.transcript).map(t => ({
@@ -105,20 +131,22 @@ export function toPublicCall(
   }))
 
   const request = REQUESTS.find(r => r === row.contact_request) ?? null
-  const reveal = opts.revealNumber && Boolean(row.from_number)
+  const callable = opts.revealNumber ? dialableNumber(row.from_number) : null
 
   return {
     ref: row.public_ref ?? null,
     startedAt: row.created_at,
     durationSec: row.duration_sec ?? null,
-    summary: row.summary ? redactPii(row.summary) : fallbackSummary(transcript),
+    summary: row.summary ? redactPii(row.summary) : fallbackSummary(transcript, opts.mentionsHealth),
     contactRequest: request,
     contactNote: request && row.contact_note ? redactPii(row.contact_note) : null,
     // Already cleaned when it was extracted; redacted again here because this
     // is the last point before the page, whatever wrote the column.
     callerName: row.caller_name ? redactPii(row.caller_name) : null,
-    caller: reveal ? (row.from_number as string) : maskPhone(row.from_number),
-    ...(reveal ? { callbackNumber: row.from_number as string } : {}),
+    // Ett dolt nummer visas som "Dolt nummer" även i klientläge, och får inget
+    // ringbart nummer: sidan varnar då i stället för att erbjuda en tel:-länk.
+    caller: callable ?? (opts.revealNumber ? 'Dolt nummer' : maskPhone(row.from_number)),
+    ...(callable ? { callbackNumber: callable } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
     bookings: opts.bookings ?? [],
@@ -129,10 +157,15 @@ export function toPublicCall(
 /**
  * Until Claude has written a summary (or when it cannot be reached), show what
  * the caller opened with rather than an empty line.
+ *
+ * Det är kundens egna ord, ofiltrerade — så de går genom samma hälsofilter som
+ * sammanfattningarna innan de visas. Hela repliken prövas, inte bara den
+ * avkortade biten, så att ett ord som klipps mitt itu ändå fångas.
  */
-function fallbackSummary(transcript: PublicCall['transcript']): string {
+function fallbackSummary(transcript: PublicCall['transcript'], mentionsHealth: (text: string) => boolean): string {
   const first = transcript.find(t => t.speaker !== 'receptionist')?.text
   if (!first) return 'Den som ringde lade på utan att säga något.'
+  if (mentionsHealth(first)) return 'Kunden ringde om något som gäller omsorg.'
   const clipped = first.length > 140 ? `${first.slice(0, 137).trimEnd()}…` : first
   return `Kunden sa: ”${clipped}”`
 }

@@ -3,11 +3,12 @@
 import { useId, useState } from 'react'
 import { fromStockholm } from '@/lib/stockholm-time'
 import { BOOKING_NAME_MAX, BOOKING_NOTE_MAX, BOOKING_TITLE_MAX } from '@/lib/booking-rules'
+import s from '@/app/master/[shareId]/bos/bos.module.css'
 
-// Create or edit one booking — used by "Boka in" on a call card and by the
-// calendar itself. Day and time are Swedish wall-clock time whatever the
-// device's time zone (lib/stockholm-time.ts); the server checks everything
-// again (lib/booking-rules.ts), this only catches the obvious early.
+// Create or edit one booking — used by "Boka in" in a case on the client's BOS
+// page and by the calendar there. Day and time are Swedish wall-clock time
+// whatever the device's time zone (lib/stockholm-time.ts); the server checks
+// everything again (lib/booking-rules.ts), this only catches the obvious early.
 
 export interface BookingDraft {
   title: string
@@ -105,84 +106,69 @@ export default function BookingForm({
   }
 
   return (
-    <form onSubmit={submit} style={{
-      marginTop: 12, padding: 14, borderRadius: 12,
-      background: 'rgba(96,165,250,0.06)', border: '1px solid rgba(96,165,250,0.25)',
-    }}>
-      {context && (
-        <p style={{ margin: '0 0 10px', fontSize: 12.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.55)' }}>{context}</p>
-      )}
-      {basis && (
-        <p style={{ margin: '0 0 10px', fontSize: 11.5, color: '#93c5fd' }}>
-          {basis} — kontrollera dag och tid innan ni sparar.
-        </p>
-      )}
+    <form onSubmit={submit} className={s.form}>
+      {context && <p className={s.help} style={{ marginTop: 0, marginBottom: 10 }}>{context}</p>}
+      {basis && <p className={s.basis}>{basis} — kontrollera dag och tid innan ni sparar.</p>}
 
       <Field label="Titel" htmlFor={`${id}-title`}>
-        <input id={`${id}-title`} value={draft.title} maxLength={BOOKING_TITLE_MAX}
-          onChange={e => set('title', e.target.value)} style={input} required />
+        <input id={`${id}-title`} className={s.input} value={draft.title} maxLength={BOOKING_TITLE_MAX}
+          onChange={e => set('title', e.target.value)} required />
       </Field>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+      <div className={s.formGrid}>
         <Field label="Datum" htmlFor={`${id}-date`}>
-          <input id={`${id}-date`} type="date" value={draft.date}
-            onChange={e => set('date', e.target.value)} style={input} required />
+          <input id={`${id}-date`} className={s.input} type="date" value={draft.date}
+            onChange={e => set('date', e.target.value)} required />
         </Field>
         <Field label="Tid" htmlFor={`${id}-time`}>
-          <input id={`${id}-time`} type="time" step={900} value={draft.time}
-            onChange={e => set('time', e.target.value)} style={input} required />
+          <input id={`${id}-time`} className={s.input} type="time" step={900} value={draft.time}
+            onChange={e => set('time', e.target.value)} required />
         </Field>
         <Field label="Längd" htmlFor={`${id}-dur`}>
-          <select id={`${id}-dur`} value={draft.durationMin}
-            onChange={e => set('durationMin', Number(e.target.value))} style={input}>
-            {durations.map(m => <option key={m} value={m} style={{ color: '#151313' }}>{durationLabel(m)}</option>)}
+          <select id={`${id}-dur`} className={s.select} style={{ width: '100%', height: 38 }} value={draft.durationMin}
+            onChange={e => set('durationMin', Number(e.target.value))}>
+            {durations.map(m => <option key={m} value={m}>{durationLabel(m)}</option>)}
           </select>
         </Field>
       </div>
 
       <Field label="Namn (valfritt)" htmlFor={`${id}-name`}>
-        <input id={`${id}-name`} value={draft.callerName} maxLength={BOOKING_NAME_MAX}
-          onChange={e => set('callerName', e.target.value)} style={input} placeholder="Vem bokningen gäller" />
+        <input id={`${id}-name`} className={s.input} value={draft.callerName} maxLength={BOOKING_NAME_MAX}
+          onChange={e => set('callerName', e.target.value)} placeholder="Vem bokningen gäller" />
       </Field>
 
       <Field label="Anteckning (valfritt)" htmlFor={`${id}-note`}>
-        <textarea id={`${id}-note`} value={draft.note} maxLength={BOOKING_NOTE_MAX} rows={2}
-          onChange={e => set('note', e.target.value)} style={{ ...input, resize: 'vertical', fontFamily: 'inherit' }} />
+        <textarea id={`${id}-note`} className={s.textarea} style={{ minHeight: 64 }} value={draft.note}
+          maxLength={BOOKING_NOTE_MAX} rows={2} onChange={e => set('note', e.target.value)} />
       </Field>
 
       {markBookedOption && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'rgba(255,255,255,0.75)', marginTop: 4 }}>
+        <label className={s.checkboxRow}>
           <input type="checkbox" checked={markBooked} onChange={e => setMarkBooked(e.target.checked)} />
-          Sätt samtalet som ”Bokad”
+          Flytta ärendet till Klart (bokad)
         </label>
       )}
 
-      <p style={{ margin: '8px 0 0', fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-        Syns för alla som har länken — skriv inte telefonnummer eller personnummer här.
-      </p>
+      <p className={s.help}>Syns för alla som har länken. Skriv inte personnummer här.</p>
 
-      {error && <p role="alert" style={{ margin: '8px 0 0', fontSize: 12.5, color: '#f87171' }}>{error}</p>}
+      {error && <p role="alert" className={s.error}>{error}</p>}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12, alignItems: 'center' }}>
-        <button type="submit" disabled={saving} style={{
-          border: 'none', borderRadius: 9, padding: '8px 16px', fontSize: 12.5, fontWeight: 700,
-          cursor: saving ? 'wait' : 'pointer', color: 'white', background: '#3b82f6', opacity: saving ? 0.6 : 1,
-        }}>
+      <div className={s.rowActions}>
+        <button type="submit" disabled={saving} className={`${s.btn} ${s.btnPrimary} ${s.btnSm}`}>
           {saving ? 'Sparar…' : submitLabel}
         </button>
-        <button type="button" onClick={onCancel} disabled={saving} style={ghost}>Avbryt</button>
+        <button type="button" onClick={onCancel} disabled={saving} className={`${s.btn} ${s.btnGhost} ${s.btnSm}`}>Avbryt</button>
 
         {onDelete && (
           confirmDelete ? (
-            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12.5, color: 'rgba(255,255,255,0.7)' }}>
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 13.5 }}>
               Ta bort bokningen?
-              <button type="button" onClick={doDelete} disabled={saving}
-                style={{ ...ghost, color: '#f87171', borderColor: 'rgba(248,113,113,0.4)' }}>Ja, ta bort</button>
-              <button type="button" onClick={() => setConfirmDelete(false)} disabled={saving} style={ghost}>Nej</button>
+              <button type="button" onClick={doDelete} disabled={saving} className={`${s.btn} ${s.btnDanger} ${s.btnSm}`}>Ja, ta bort</button>
+              <button type="button" onClick={() => setConfirmDelete(false)} disabled={saving} className={`${s.btn} ${s.btnGhost} ${s.btnSm}`}>Nej</button>
             </span>
           ) : (
             <button type="button" onClick={() => setConfirmDelete(true)} disabled={saving}
-              style={{ ...ghost, marginLeft: 'auto', color: '#f87171' }}>
+              className={`${s.btn} ${s.btnDanger} ${s.btnSm}`} style={{ marginLeft: 'auto' }}>
               Ta bort
             </button>
           )
@@ -194,26 +180,9 @@ export default function BookingForm({
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 10 }}>
-      <label htmlFor={htmlFor} style={{
-        display: 'block', fontSize: 10.5, fontWeight: 700, letterSpacing: '0.06em',
-        textTransform: 'uppercase', color: 'rgba(255,255,255,0.5)', marginBottom: 5,
-      }}>
-        {label}
-      </label>
+    <div className={s.field}>
+      <label htmlFor={htmlFor} className={s.label}>{label}</label>
       {children}
     </div>
   )
-}
-
-const input: React.CSSProperties = {
-  width: '100%', boxSizing: 'border-box', fontSize: 13.5, padding: '8px 10px', borderRadius: 9, outline: 'none',
-  color: '#f6f3ee', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.15)',
-  colorScheme: 'dark',
-}
-
-const ghost: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)',
-  border: '1px solid rgba(255,255,255,0.12)', borderRadius: 9,
-  padding: '8px 14px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
 }
