@@ -84,7 +84,7 @@ export default function CasePanel({
         ) : (
           <>
             <MissingNumber />
-            <p className={s.help}>Numret var dolt eller saknas. Läs hela samtalet längre ner.</p>
+            <p className={s.help}>Numret var dolt eller saknas.</p>
           </>
         )}
       </section>

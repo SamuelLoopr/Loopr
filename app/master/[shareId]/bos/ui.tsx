@@ -115,7 +115,7 @@ export function MissingNumber() {
   return (
     <p className={cx(s.warning, s.lift)}>
       <FiAlertTriangle aria-hidden="true" size={14} />
-      Nummer saknas – se samtalet
+      Nummer saknas
     </p>
   )
 }
