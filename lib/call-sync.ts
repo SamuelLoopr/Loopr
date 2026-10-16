@@ -417,7 +417,10 @@ export async function enrichRow(
   const writeVersioned = async () => {
     for (const patch of [withCallback, full, withTokens, analysis]) {
       const res = await table().update(patch).eq('id', row.id).or(NEEDS_ANALYSIS)
-      if (!isMissingColumn(res.error)) return res
+      // Ett återuppringningsnummer som databasen ändå säger nej till (CHECK,
+      // 042) får aldrig fälla resten av analysen: den sparas då utan numret.
+      const numberRefused = patch === withCallback && res.error?.code === '23514'
+      if (!isMissingColumn(res.error) && !numberRefused) return res
     }
     return table().update(analysis).eq('id', row.id).or(NEEDS_ANALYSIS)
   }
