@@ -1,4 +1,4 @@
-import { CONTACT_REQUEST_LABEL, type PublicContactRequest } from '@/lib/public-calls'
+import { CONTACT_REQUEST_LABEL, dialableNumber, type PublicContactRequest } from '@/lib/public-calls'
 
 // Notisen som går till klienten när ett samtal är färdiganalyserat.
 //
@@ -16,6 +16,11 @@ export interface CallNotification {
   callerName: string | null
   /** Hela numret, E.164. Null när Twilio inte fick något (dolt nummer). */
   fromNumber: string | null
+  /**
+   * Numret den som ringde själv gav för att bli uppringd (call_logs.callback_number,
+   * 042). Null när inget gavs. Står som "Ring upp på" i mejlet.
+   */
+  givenNumber: string | null
   summary: string
   contactRequest: PublicContactRequest | null
   contactNote: string | null
@@ -62,11 +67,16 @@ export function badgeText(request: PublicContactRequest | null): string | null {
 }
 
 export function buildCallNotification(call: CallNotification): BuiltEmail {
-  const who = call.callerName ?? call.fromNumber ?? 'Okänd uppringare'
+  // Ett dolt nummer kommer som "anonymous" eller en av Twilios platshållare;
+  // det är inget att ringa, så det visas som "Dolt nummer".
+  const from = dialableNumber(call.fromNumber)
+  const given = dialableNumber(call.givenNumber)
+  const ringUpp = given && given !== from ? given : null
+  const who = call.callerName ?? from ?? ringUpp ?? 'Okänd uppringare'
   const badge = badgeText(call.contactRequest)
-  const number = call.fromNumber ?? 'Dolt nummer'
-  // tel: vill ha numret utan mellanslag; E.164 från Twilio är redan rent.
-  const telHref = call.fromNumber?.replace(/[^+\d]/g, '') ?? null
+  const number = from ?? 'Dolt nummer'
+  // tel: vill ha numret utan mellanslag; E.164 är redan rent.
+  const telHref = from
 
   const subject = badge
     ? `${badge}: ${who}`
@@ -78,7 +88,8 @@ export function buildCallNotification(call: CallNotification): BuiltEmail {
     '',
     ...(badge ? [badge.toUpperCase(), ''] : []),
     ...(call.callerName ? [`Namn: ${call.callerName}`] : []),
-    `Telefon: ${number}`,
+    ...(ringUpp ? [`Ring upp på: ${ringUpp}`] : []),
+    `${ringUpp ? 'Ringde från' : 'Telefon'}: ${number}`,
     '',
     ...(call.contactNote ? [call.contactNote, ''] : []),
     call.summary,
@@ -109,6 +120,11 @@ export function buildCallNotification(call: CallNotification): BuiltEmail {
     <tr>
       <td style="padding:16px 24px 0;">
         ${call.callerName ? `<p style="margin:0 0 6px;font-size:17px;font-weight:700;">${esc(call.callerName)}</p>` : ''}
+        ${ringUpp ? `<p style="margin:0 0 8px;font-size:16px;">
+          <span style="display:block;font-size:12px;font-weight:700;color:#5b21b6;">Ring upp på</span>
+          <a href="tel:${esc(ringUpp)}" style="color:#7C3AED;text-decoration:none;font-weight:700;">${esc(ringUpp)}</a>
+        </p>` : ''}
+        ${ringUpp ? '<span style="display:block;font-size:12px;color:#6b6676;">Ringde från</span>' : ''}
         <p style="margin:0;font-size:16px;">
           ${telHref
             ? `<a href="tel:${esc(telHref)}" style="color:#7C3AED;text-decoration:none;font-weight:700;">${esc(number)}</a>`

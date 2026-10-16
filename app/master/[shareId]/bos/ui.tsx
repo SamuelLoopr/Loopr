@@ -61,22 +61,28 @@ async function copyText(text: string): Promise<boolean> {
 }
 
 /**
- * Numret stort, med kopiera och ring. `number` är det ringbara numret
- * (callbackNumber); saknas det visas varningen i stället — se MissingNumber.
+ * Ett nummer stort, med kopiera och ring. `label` står ovanför ("Ring upp på");
+ * `quiet` gör numret mindre, för det nummer som bara är där samtalet kom från
+ * när kunden bett om att bli uppringd på ett annat.
  */
 export function PhoneActions({
   number,
   big = false,
+  label,
+  quiet = false,
   onCopied,
 }: {
   number: string
   big?: boolean
+  label?: string
+  quiet?: boolean
   onCopied?: (ok: boolean) => void
 }) {
   const [copied, setCopied] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
   const shown = formatPhone(number)
+  const what = label ? `${label.toLowerCase()} ${shown}` : shown
 
   async function copy() {
     const ok = await copyText(number)
@@ -88,26 +94,44 @@ export function PhoneActions({
   }
 
   return (
-    <div className={cx(s.phoneRow, s.lift)}>
-      <span className={cx(s.phone, big && s.phoneBig)}>{shown}</span>
-      <button
-        type="button"
-        className={cx(s.iconButton, copied && s.iconButtonDone)}
-        onClick={copy}
-        title={copied ? 'Kopierat' : 'Kopiera numret'}
-        aria-label={copied ? `Numret ${shown} är kopierat` : `Kopiera numret ${shown}`}
-      >
-        {copied ? <FiCheck aria-hidden="true" size={15} /> : <FiCopy aria-hidden="true" size={15} />}
-      </button>
-      <a
-        className={s.iconButton}
-        href={`tel:${number.replace(/[^+\d]/g, '')}`}
-        title="Ring upp"
-        aria-label={`Ring ${shown}`}
-      >
-        <FiPhone aria-hidden="true" size={15} />
-      </a>
+    <div className={cx(s.phoneBlock, s.lift)}>
+      {label && <span className={cx(s.phoneLabel, quiet && s.phoneLabelQuiet)}>{label}</span>}
+      <div className={s.phoneRow}>
+        <span className={cx(s.phone, big && !quiet && s.phoneBig, quiet && s.phoneQuiet)}>{shown}</span>
+        <button
+          type="button"
+          className={cx(s.iconButton, copied && s.iconButtonDone)}
+          onClick={copy}
+          title={copied ? 'Kopierat' : 'Kopiera numret'}
+          aria-label={copied ? `Numret ${shown} är kopierat` : `Kopiera numret, ${what}`}
+        >
+          {copied ? <FiCheck aria-hidden="true" size={15} /> : <FiCopy aria-hidden="true" size={15} />}
+        </button>
+        <a
+          className={s.iconButton}
+          href={`tel:${number.replace(/[^+\d]/g, '')}`}
+          title="Ring upp"
+          aria-label={`Ring, ${what}`}
+        >
+          <FiPhone aria-hidden="true" size={15} />
+        </a>
+      </div>
     </div>
+  )
+}
+
+/**
+ * Numren för ett ärende. Har kunden gett ett nummer att bli uppringd på står
+ * det först, som "Ring upp på"; numret samtalet kom från står då under, mindre.
+ * Finns inget av dem visas varningen.
+ */
+export function CallNumbers({ from, given, big = false }: { from?: string; given?: string; big?: boolean }) {
+  if (!from && !given) return <MissingNumber />
+  return (
+    <>
+      {given && <PhoneActions number={given} big={big} label="Ring upp på" />}
+      {from && <PhoneActions number={from} big={big} label={given ? 'Ringde från' : undefined} quiet={Boolean(given)} />}
+    </>
   )
 }
 

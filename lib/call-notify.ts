@@ -99,9 +99,20 @@ export async function notifyCompletedCall(
 
   const row = data as ClaimedRow
 
+  // Återuppringningsnumret (042) läses för sig: saknas kolumnen än blir det
+  // bara null, och bokningen ovan påverkas inte.
+  const { data: extra } = await supabase
+    .from('call_logs')
+    .select('callback_number')
+    .eq('id', callId)
+    .eq('agent_id', agent.id)
+    .maybeSingle()
+  const givenNumber = (extra as { callback_number?: string | null } | null)?.callback_number ?? null
+
   const built = buildCallNotification({
     callerName: row.caller_name,
     fromNumber: row.from_number,
+    givenNumber,
     summary: row.summary ?? 'Samtalet har ingen sammanfattning.',
     contactRequest: REQUESTS.find(r => r === row.contact_request) ?? null,
     contactNote: row.contact_note,

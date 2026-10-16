@@ -56,6 +56,7 @@ const SILENT_CALL: CallInsight = {
   contactNote: null,
   callerName: null,
   aiResolved: null,   // ingenting sades, alltså ingenting att lösa
+  callbackNumber: null,
   usage: null,        // ingen modell anropades
 }
 
@@ -408,11 +409,13 @@ export async function enrichRow(
     anthropic_input_tokens: insight.usage?.inputTokens ?? null,
     anthropic_output_tokens: insight.usage?.outputTokens ?? null,
   }
-  // Lösningsgraden (032) ligger ytterst: nyast kolumn, först att falla bort.
+  // Lösningsgraden (032) och återuppringningsnumret (042) ligger ytterst:
+  // nyast kolumn, först att falla bort.
   const full = { ...withTokens, ai_resolved: insight.aiResolved }
+  const withCallback = { ...full, callback_number: insight.callbackNumber }
 
   const writeVersioned = async () => {
-    for (const patch of [full, withTokens, analysis]) {
+    for (const patch of [withCallback, full, withTokens, analysis]) {
       const res = await table().update(patch).eq('id', row.id).or(NEEDS_ANALYSIS)
       if (!isMissingColumn(res.error)) return res
     }

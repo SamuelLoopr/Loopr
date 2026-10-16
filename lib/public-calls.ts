@@ -46,6 +46,12 @@ export interface PublicCall {
    * använder det till tel:-länkar.
    */
   callbackNumber?: string
+  /**
+   * Numret den som ringde själv gav för att bli uppringd (call_logs.callback_number,
+   * 042) — "Ring upp på". Bara i klientläge, och bara när det inte är samma
+   * nummer som samtalet kom från.
+   */
+  givenNumber?: string
   /** Set by the client on this page. */
   status: ClientStatus
   /** The client's own note, shown exactly as they wrote it. */
@@ -83,6 +89,7 @@ export interface CallRow {
   caller_name?: string | null
   client_status?: string | null
   client_note?: string | null
+  callback_number?: string | null
 }
 
 const REQUESTS: readonly PublicContactRequest[] = ['meeting', 'quote', 'callback']
@@ -132,6 +139,7 @@ export function toPublicCall(
 
   const request = REQUESTS.find(r => r === row.contact_request) ?? null
   const callable = opts.revealNumber ? dialableNumber(row.from_number) : null
+  const given = opts.revealNumber ? dialableNumber(row.callback_number) : null
 
   return {
     ref: row.public_ref ?? null,
@@ -147,6 +155,7 @@ export function toPublicCall(
     // ringbart nummer: sidan varnar då i stället för att erbjuda en tel:-länk.
     caller: callable ?? (opts.revealNumber ? 'Dolt nummer' : maskPhone(row.from_number)),
     ...(callable ? { callbackNumber: callable } : {}),
+    ...(given && given !== callable ? { givenNumber: given } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
     bookings: opts.bookings ?? [],

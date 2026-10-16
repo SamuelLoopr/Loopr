@@ -80,9 +80,18 @@ const AMOUNT = /^\d{1,3}(?: \d{3})+(?: ?- ?\d{1,3}(?: \d{3})+)?$/
  * written as an amount. Prices, measurements, years and postcodes stay intact;
  * the occasional eight-digit order number gets hidden too — the safe direction
  * to err in on a page anyone with the link can open.
+ *
+ * `options.phone` decides what a phone number is replaced with. The analysis
+ * (lib/call-insights.ts) numbers them, "[telefonnummer 1]", so the model can
+ * point out a callback number without ever seeing its digits. Everywhere else
+ * keeps the default.
  */
-export function redactPii(text: string | null | undefined): string {
+export function redactPii(
+  text: string | null | undefined,
+  options: { phone?: (match: string) => string } = {},
+): string {
   if (!text) return ''
+  const phone = (options && typeof options === 'object' && options.phone) || (() => '[telefonnummer]')
 
   return text
     .replace(EMAIL, '[e-post]')
@@ -92,8 +101,8 @@ export function redactPii(text: string | null | undefined): string {
       if (digitCount > 15) return match
 
       const dialled = /^\(?(?:\+|0)/.test(match)
-      if (dialled) return digitCount >= 7 ? '[telefonnummer]' : match
+      if (dialled) return digitCount >= 7 ? phone(match) : match
 
-      return digitCount >= 8 && !AMOUNT.test(match.trim()) ? '[telefonnummer]' : match
+      return digitCount >= 8 && !AMOUNT.test(match.trim()) ? phone(match) : match
     })
 }

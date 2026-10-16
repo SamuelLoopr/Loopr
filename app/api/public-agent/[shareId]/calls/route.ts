@@ -58,12 +58,13 @@ const BASE_COLS = 'id, created_at, duration_sec, summary, transcript, from_numbe
 
 // Newest schema first; each step down is what an older database can serve. The
 // code ships ahead of its migrations, so the list must keep working on all three.
+const CRM_COLS = `${BASE_COLS}, contact_request, contact_note, public_ref, caller_name, client_status, client_note`
+
 const COLUMN_SETS: { cols: string; editable: boolean }[] = [
+  // 042_callback_number: the number the caller gave to be rung back on.
+  { cols: `${CRM_COLS}, callback_number`, editable: true },
   // 028_bos_client_crm: name, status, note and the per-call ref for writes.
-  {
-    cols: `${BASE_COLS}, contact_request, contact_note, public_ref, caller_name, client_status, client_note`,
-    editable: true,
-  },
+  { cols: CRM_COLS, editable: true },
   // 027_call_insights: "Vill bli kontaktad" badges, read-only.
   { cols: `${BASE_COLS}, contact_request, contact_note`, editable: false },
   { cols: BASE_COLS, editable: false },

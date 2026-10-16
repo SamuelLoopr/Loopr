@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { z } from 'zod'
 import { redactPii } from '@/lib/redact'
+import { dialableNumber } from '@/lib/public-calls'
 import type { Turn } from '@/lib/call-transcript'
 
 // Turns a finished call into what the business reads on its public calls list:
@@ -26,6 +27,10 @@ export type ContactRequest = 'none' | 'meeting' | 'quote' | 'callback'
  *   1  summary, contact_request, contact_note   (027_call_insights)
  *   2  + caller_name                            (028_bos_client_crm)
  *   3  + ai_resolved                            (032_call_resolution)
+ *
+ * callback_number (042) kom till utan att versionen höjdes: en höjning hade
+ * analyserat om alla klienters befintliga samtal och skrivit om deras ärenden.
+ * Nya samtal får fältet; gamla får det inte i efterhand.
  */
 export const INSIGHT_VERSION = 3
 
@@ -44,6 +49,11 @@ export interface CallInsight {
    */
   aiResolved: boolean | null
   /**
+   * Numret den som ringde uttryckligen gav för att bli uppringd, E.164
+   * (+46…). Null när inget sådant nummer gavs. Se callbackNumberFrom().
+   */
+  callbackNumber: string | null
+  /**
    * Vad analysen förbrukade. Sparas per samtal (031) eftersom Anthropic inte
    * har någon uppslagning i efterhand — kostnaden går bara att veta om den
    * fångas här och nu. Kostnaden räknas ut i lib/service-pricing.ts.
@@ -57,11 +67,12 @@ const InsightSchema = z.object({
   contact_note: z.string(),
   caller_name: z.string(),
   ai_resolved: z.boolean(),
+  callback_number: z.string(),
 })
 
 const SYSTEM_PROMPT = `Du läser transkriptet av ett telefonsamtal som en AI-receptionist tog emot åt ett svenskt lokalt företag, och sammanfattar det för företagets ägare. Ägaren läser resultatet i en samtalslogg och använder det för att se vilka kunder som ska kontaktas.
 
-summary — en till två korta meningar på svenska: vad den som ringde ville och hur samtalet slutade. Skriv sakligt om "kunden" eller "den som ringde". Ta inte med telefonnummer, e-postadresser eller personnummer.
+summary — en till två korta meningar på svenska: vad den som ringde ville och hur samtalet slutade. Skriv sakligt om "kunden" eller "den som ringde". Ta inte med telefonnummer, e-postadresser eller personnummer, och skriv inte ut platshållare som [telefonnummer 1].
 
 contact_request — vad den som ringde vill att företaget gör härnäst:
 - "quote": vill ha offert, pris eller kostnadsförslag på ett jobb
@@ -80,6 +91,8 @@ Sätt false om något av detta stämmer:
 Ett samtal där personen bara ville ha praktisk information — öppettider, adress, vad företaget gör — och fick den, är true.
 
 caller_name — namnet som den som ringde själv uppger, som det sades (en person, eller ett företag om det är allt som nämns). Tom sträng om inget namn sägs. Gissa aldrig, och ta inte receptionistens eller det uppringda företagets namn.
+
+callback_number — telefonnumren i transkriptet är utbytta mot platshållare: [telefonnummer 1], [telefonnummer 2] och så vidare, där samma nummer alltid har samma platshållare. Skriv platshållaren exakt som den står om den som ringer uttryckligen ger det numret för att bli uppringd på: säger att vi ska ringa just det numret, eller svarar på receptionistens fråga om vilket nummer vi når hen på. Annars en tom sträng — också när ett nummer bara nämns i förbigående, är någon annans, är företagets eget, eller är ett order-, kund- eller ärendenummer. Skriv aldrig siffror här, och hitta aldrig på en platshållare.
 
 Hälsouppgifter — summary, contact_note och caller_name får aldrig innehålla något om någons fysiska eller psykiska hälsa: sjukdomar, diagnoser, symtom, skador på kroppen, mediciner, behandlingar och vårdbesök, funktionsnedsättningar eller hjälpmedel som rullstol och rullator. Det gäller den som ringer och alla andra som nämns. Skriv i stället "gäller omsorg" där uppgiften hade stått: "Kunden vill ha hjälp med städning hos sin pappa, gäller omsorg." i stället för att nämna pappans sjukdom, och contact_note "Städhjälp varannan vecka, gäller omsorg". Skador på hus och saker, som en vattenskada, är inte hälsouppgifter. Nämns ingen hälsouppgift i samtalet ska "gäller omsorg" inte stå med.
 
@@ -106,10 +119,10 @@ export async function classifyCall(turns: Turn[], businessName: string): Promise
 
   // Contact details are redacted before the transcript leaves the server: the
   // classification does not need them, and a number that is never sent cannot
-  // end up in the summary shown on the public page.
-  const transcript = turns
-    .map(t => `${SPEAKER_LABEL[t.speaker]}: ${redactPii(t.text)}`)
-    .join('\n')
+  // end up in the summary shown on the public page. Phone numbers become
+  // numbered placeholders, so the model can still point out which one the
+  // caller gave for a callback — the digits stay here (callbackNumberFrom).
+  const { transcript, numbers } = maskTranscript(turns)
 
   try {
     const response = await api.beta.messages.parse({
@@ -147,7 +160,7 @@ export async function classifyCall(turns: Turn[], businessName: string): Promise
       return null
     }
 
-    const summary = withoutHealthData(redactPii(parsed.summary).trim())
+    const summary = withoutHealthData(redactPii(withoutPlaceholders(parsed.summary)).trim())
     if (!summary) return null
 
     return {
@@ -160,6 +173,7 @@ export async function classifyCall(turns: Turn[], businessName: string): Promise
       // och lösningsgraden en annan.
       aiResolved: parsed.ai_resolved && parsed.contact_request === 'none',
       callerName: cleanCallerName(parsed.caller_name),
+      callbackNumber: callbackNumberFrom(parsed.callback_number, numbers),
       usage: { inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens },
     }
   } catch (err) {
@@ -194,7 +208,7 @@ function cleanCallerName(raw: string): string | null {
 }
 
 function cleanContactNote(raw: string): string | null {
-  const note = redactPii(raw).trim()
+  const note = redactPii(withoutPlaceholders(raw)).trim()
   if (!note) return null
   return mentionsHealth(note) ? CARE : note
 }
@@ -259,4 +273,88 @@ function withoutHealthData(summary: string): string {
     else if (!marked && !out.includes(`${CARE}.`)) out.push(`${CARE}.`)
   }
   return out.join(' ')
+}
+
+// ── Återuppringningsnummer ───────────────────────────────────────────────────
+
+interface MaskedNumber {
+  /** Numret som det skrevs i transkriptet. Lämnar aldrig servern. */
+  raw: string
+  /** Sades av den som ringde (eller en okänd talare), inte bara av receptionisten. */
+  byCaller: boolean
+}
+
+/**
+ * Transkriptet som det skickas till modellen: e-post och personnummer
+ * maskerade som överallt annars, och varje telefonnummer utbytt mot en
+ * numrerad platshållare. Samma siffror får samma platshållare, så att ett
+ * nummer som receptionisten upprepar känns igen som samma.
+ */
+function maskTranscript(turns: Turn[]): { transcript: string; numbers: MaskedNumber[] } {
+  const numbers: MaskedNumber[] = []
+  const transcript = turns
+    .map(t => {
+      const text = redactPii(t.text, {
+        phone: match => {
+          const digits = match.replace(/\D/g, '')
+          let i = numbers.findIndex(n => n.raw.replace(/\D/g, '') === digits)
+          if (i === -1) i = numbers.push({ raw: match, byCaller: false }) - 1
+          if (t.speaker !== 'receptionist') numbers[i].byCaller = true
+          return `[telefonnummer ${i + 1}]`
+        },
+      })
+      return `${SPEAKER_LABEL[t.speaker]}: ${text}`
+    })
+    .join('\n')
+  return { transcript, numbers }
+}
+
+/** En platshållare som modellen ändå skrev ut blir den vanliga maskeringen. */
+function withoutPlaceholders(text: string): string {
+  return text.replace(/\[telefonnummer \d+\]/g, '[telefonnummer]')
+}
+
+/**
+ * Platshållaren modellen pekade ut -> numret i E.164, eller null. Modellen får
+ * bara välja bland numren i samtalet; siffror den skriver själv godtas inte.
+ * Numret måste dessutom ha sagts av den som ringde, inte bara av
+ * receptionisten — det är så ett företagsnummer som receptionisten läser upp
+ * hålls utanför.
+ */
+function callbackNumberFrom(answer: string, numbers: MaskedNumber[]): string | null {
+  const index = answer.trim().match(/^\[telefonnummer (\d+)\]$/)?.[1]
+  if (!index) return null
+  const chosen = numbers[Number(index) - 1]
+  if (!chosen?.byCaller) return null
+  return normalizeCallbackNumber(chosen.raw)
+}
+
+/**
+ * "070-123 45 67", "+46 70 123 45 67", "0046 70…" -> "+46701234567". Null för
+ * allt som inte går att ringa: för få eller för många siffror, ett svenskt
+ * mobilnummer med fel längd, inget riktnummer, eller en av Twilios
+ * platshållare för dolt nummer. Utländska nummer godtas bara med landskod
+ * (+ eller 00) och behålls som de är.
+ */
+export function normalizeCallbackNumber(raw: string): string | null {
+  const compact = raw.trim().replace(/[\s\-().]/g, '')
+  let e164: string
+  if (/^\+\d+$/.test(compact)) e164 = compact
+  else if (/^00\d+$/.test(compact)) e164 = `+${compact.slice(2)}`
+  else if (/^0\d+$/.test(compact)) e164 = `+46${compact.slice(1)}`
+  else return null
+
+  // "+46 (0)70…" skrivs ibland med nollan kvar.
+  if (e164.startsWith('+460')) e164 = `+46${e164.slice(4)}`
+
+  const digits = e164.slice(1)
+  if (digits.startsWith('46')) {
+    // Svenskt nummer: 7–9 siffror efter landskoden, och ett mobilnummer (07…) har nio.
+    const national = digits.slice(2)
+    if (!/^[1-9]\d{6,8}$/.test(national)) return null
+    if (national.startsWith('7') && national.length !== 9) return null
+  } else if (!/^[1-9]\d{7,14}$/.test(digits)) {
+    return null
+  }
+  return dialableNumber(e164) === e164 ? e164 : null
 }

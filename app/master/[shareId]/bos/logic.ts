@@ -163,7 +163,7 @@ export function filtersActive(f: Filters): boolean {
 }
 
 /**
- * Var sökningen träffar: 'kort' när det syns på kortet (namn, nummer,
+ * Var sökningen träffar: 'kort' när det syns på kortet (namn, båda numren,
  * sammanfattning, vad kunden vill, anteckning), 'samtal' när det bara står i
  * transkriptet, null när ingenting matchar. Siffror jämförs mot numret både med
  * +46 och med inledande nolla, så "0702" och "+46702" hittar samma samtal.
@@ -173,10 +173,13 @@ export function searchHit(call: PublicCall, query: string): 'kort' | 'samtal' | 
   if (!q) return 'kort'
 
   const typedDigits = q.replace(/[\s\-+()]/g, '')
-  if (/^\d{3,}$/.test(typedDigits) && call.callbackNumber) {
-    const own = call.callbackNumber.replace(/\D/g, '')
-    const national = own.startsWith('46') ? `0${own.slice(2)}` : own
-    if (own.includes(typedDigits) || national.includes(typedDigits)) return 'kort'
+  if (/^\d{3,}$/.test(typedDigits)) {
+    for (const number of [call.callbackNumber, call.givenNumber]) {
+      if (!number) continue
+      const own = number.replace(/\D/g, '')
+      const national = own.startsWith('46') ? `0${own.slice(2)}` : own
+      if (own.includes(typedDigits) || national.includes(typedDigits)) return 'kort'
+    }
   }
 
   const visible = [
