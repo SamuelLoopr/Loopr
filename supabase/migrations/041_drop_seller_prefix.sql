@@ -1,0 +1,22 @@
+-- Tar bort seller_settings.invoice_number_prefix.
+--
+-- Prefixet fanns på två ställen och ingenting förenade dem:
+--
+--   invoice_counters.prefix               (039) — det next_invoice_number() läser
+--   seller_settings.invoice_number_prefix (038) — det gränssnittet skulle visa
+--
+-- Ändrade man det ena hände ingenting med det andra, vilket förr eller senare
+-- hade gett fakturanummer med ett prefix som inte stod någonstans i
+-- gränssnittet. invoice_counters.prefix är enda sanningen, eftersom prefixet
+-- hör ihop med serien och inte med säljaruppgifterna: det ska gälla framåt från
+-- den punkt det ändras, precis som räknaren.
+--
+-- 038 redigeras INTE — den är körd. Rättelsen sker framåt, som varje annan
+-- migration.
+--
+-- SÄKERT ATT KÖRA: kontrollerat mot den levande databasen 2026-10-08 att
+-- seller_settings innehåller 0 rader. Ingen data kan gå förlorad. Hade tabellen
+-- haft rader med ett ifyllt prefix skulle värdet först ha flyttats till
+-- invoice_counters.prefix.
+
+alter table seller_settings drop column if exists invoice_number_prefix;
