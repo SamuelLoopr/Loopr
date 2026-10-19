@@ -4,6 +4,7 @@ import { matchTwilioSignature, webhookUrlCandidates } from '@/lib/twilio-signatu
 import { normalizeE164 } from '@/lib/phone'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 import { fillCallbackPlaceholder } from '@/lib/callback-time'
+import { withPauseAfterStream } from '@/lib/twiml-pause'
 import { isMissingColumn } from '@/lib/db-errors'
 
 // Twilio posts application/x-www-form-urlencoded here when someone dials a
@@ -276,9 +277,15 @@ export async function POST(req: NextRequest) {
       `ElevenLabs register-call 200${conversationId ? ` · conversation_id=${conversationId}` : ' · conversation_id saknas i svaret'}`
     )
 
-    // Returned verbatim: it is ElevenLabs' TwiML, and rewrapping it would risk
-    // breaking whatever verbs they chose.
-    return new NextResponse(elBody, {
+    // ElevenLabs' TwiML, returned as it is except for one verb at the end.
+    //
+    // När agenten lägger på (end_call) stänger ElevenLabs strömmen, och Twilio
+    // går vidare till nästa verb efter <Connect>. Finns inget lägger Twilio på
+    // samma sekund — uppmätt på sex samtal: Twilios slut och ElevenLabs slut är
+    // identiska. En sekunds tystnad efter strömmen ger farvälet tid att klinga
+    // ut innan linjen bryts. Påverkar bara det som händer efter att strömmen
+    // slutat, så själva samtalet är oförändrat.
+    return new NextResponse(withPauseAfterStream(elBody), {
       status: 200,
       headers: { 'Content-Type': 'text/xml' },
     })
