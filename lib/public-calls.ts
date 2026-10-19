@@ -2,6 +2,7 @@ import { parseTranscript, type Speaker } from '@/lib/call-transcript'
 import { clientStatusOf, type ClientStatus } from '@/lib/client-status'
 import type { PublicBooking } from '@/lib/public-bookings'
 import { maskPhone, redactPii } from '@/lib/redact'
+import { promisedCallback } from '@/lib/callback-time'
 
 // What one call looks like once it leaves the server for the public BOS page
 // (/master/[shareId]). The route builds it (toPublicCall); the page imports only
@@ -52,6 +53,12 @@ export interface PublicCall {
    * nummer som samtalet kom från.
    */
   givenNumber?: string
+  /**
+   * Återuppringningen receptionisten lovade i samtalet, t.ex. "tisdag 21
+   * oktober, 10–16" (lib/callback-time.ts). Bara för agenter vars prompt lovar
+   * en tid, och bara när receptionisten faktiskt sa den.
+   */
+  promisedCallback?: string
   /** Set by the client on this page. */
   status: ClientStatus
   /** The client's own note, shown exactly as they wrote it. */
@@ -130,6 +137,8 @@ export function toPublicCall(
      * med sig Anthropics SDK.
      */
     mentionsHealth: (text: string) => boolean
+    /** Agentens prompt lovar en återuppringningstid ({{ATERUPPRINGNING}}). */
+    promisesCallback?: boolean
   },
 ): PublicCall {
   const transcript = parseTranscript(row.transcript).map(t => ({
@@ -140,6 +149,7 @@ export function toPublicCall(
   const request = REQUESTS.find(r => r === row.contact_request) ?? null
   const callable = opts.revealNumber ? dialableNumber(row.from_number) : null
   const given = opts.revealNumber ? dialableNumber(row.callback_number) : null
+  const promise = opts.promisesCallback ? promisedCallback(row.created_at, transcript) : null
 
   return {
     ref: row.public_ref ?? null,
@@ -156,6 +166,7 @@ export function toPublicCall(
     caller: callable ?? (opts.revealNumber ? 'Dolt nummer' : maskPhone(row.from_number)),
     ...(callable ? { callbackNumber: callable } : {}),
     ...(given && given !== callable ? { givenNumber: given } : {}),
+    ...(promise ? { promisedCallback: promise.label } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
     bookings: opts.bookings ?? [],

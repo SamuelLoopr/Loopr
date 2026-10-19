@@ -21,6 +21,8 @@ export interface CallNotification {
    * 042). Null när inget gavs. Står som "Ring upp på" i mejlet.
    */
   givenNumber: string | null
+  /** "tisdag 21 oktober, 10–16" — återuppringningen receptionisten lovade, eller null. */
+  promisedCallback: string | null
   summary: string
   contactRequest: PublicContactRequest | null
   contactNote: string | null
@@ -88,6 +90,7 @@ export function buildCallNotification(call: CallNotification): BuiltEmail {
     '',
     ...(badge ? [badge.toUpperCase(), ''] : []),
     ...(call.callerName ? [`Namn: ${call.callerName}`] : []),
+    ...(call.promisedCallback ? [`Utlovad återuppringning: ${call.promisedCallback}`] : []),
     ...(ringUpp ? [`Ring upp på: ${ringUpp}`] : []),
     `${ringUpp ? 'Ringde från' : 'Telefon'}: ${number}`,
     '',
@@ -132,6 +135,13 @@ export function buildCallNotification(call: CallNotification): BuiltEmail {
         </p>
       </td>
     </tr>
+    ${call.promisedCallback ? `<tr>
+      <td style="padding:14px 24px 0;">
+        <p style="margin:0;padding:10px 12px;border-radius:10px;background:#f3eefe;font-size:14.5px;color:#151313;">
+          <strong style="color:#5b21b6;">Utlovad återuppringning:</strong> ${esc(call.promisedCallback)}
+        </p>
+      </td>
+    </tr>` : ''}
     ${call.contactNote ? `<tr>
       <td style="padding:14px 24px 0;">
         <p style="margin:0;font-size:15px;font-weight:600;line-height:1.45;">${esc(call.contactNote)}</p>

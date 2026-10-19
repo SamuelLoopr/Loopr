@@ -5,6 +5,7 @@ import { isMissingColumn, isMissingTable } from '@/lib/db-errors'
 import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
 import { toPublicCall, type CallRow, type PublicCallsResponse } from '@/lib/public-calls'
 import { mentionsHealth } from '@/lib/call-insights'
+import { CALLBACK_PLACEHOLDER } from '@/lib/callback-time'
 import { BOOKING_COLS, toPublicBooking, type BookingRow, type PublicBooking } from '@/lib/public-bookings'
 
 // Backs the calls section of the public BOS page (app/master/[shareId]): the
@@ -162,12 +163,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
     }
   }
 
+  // Lovar agentens prompt en återuppringningstid? Bara svaret ja/nej används,
+  // prompten själv lämnar aldrig servern.
+  const { data: promptRow } = await supabase.from('agents').select('prompt_text').eq('id', agent.id).maybeSingle()
+  const promisesCallback = Boolean((promptRow?.prompt_text as string | null)?.includes(CALLBACK_PLACEHOLDER))
+
   const body: PublicCallsResponse = {
     calls: rows.map(row =>
       toPublicCall(row, {
         revealNumber: agent.clientMode,
         bookings: bookingsByCall.get(row.id),
         mentionsHealth,
+        promisesCallback,
       }),
     ),
     processing: await countProcessingCalls(supabase, agent.id),

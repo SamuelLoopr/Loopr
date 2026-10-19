@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FiAlertTriangle, FiCheck, FiCopy, FiMoon, FiPhone } from 'react-icons/fi'
+import { FiAlertTriangle, FiCheck, FiClock, FiCopy, FiMoon, FiPhone } from 'react-icons/fi'
 import type { ClientStatus } from '@/lib/client-status'
 import { CLIENT_STATUS_LABEL } from '@/lib/client-status'
 import { OFF_HOURS_LABEL, formatPhone, groupLabel, groupOf, type OffHours } from './logic'
@@ -132,6 +132,16 @@ export function CallNumbers({ from, given, big = false }: { from?: string; given
       {given && <PhoneActions number={given} big={big} label="Ring upp på" />}
       {from && <PhoneActions number={from} big={big} label={given ? 'Ringde från' : undefined} quiet={Boolean(given)} />}
     </>
+  )
+}
+
+/** Tiden receptionisten lovade att kontoret ringer tillbaka (lib/callback-time.ts). */
+export function PromisedCallback({ label }: { label: string }) {
+  return (
+    <p className={cx(s.promise, s.lift)}>
+      <FiClock aria-hidden="true" size={14} className={s.promiseIcon} />
+      <span><span className={s.promiseLabel}>Utlovad återuppringning:</span> {label}</span>
+    </p>
   )
 }
 

@@ -3,6 +3,7 @@ import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { matchTwilioSignature, webhookUrlCandidates } from '@/lib/twilio-signature'
 import { normalizeE164 } from '@/lib/phone'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
+import { fillCallbackPlaceholder } from '@/lib/callback-time'
 import { isMissingColumn } from '@/lib/db-errors'
 
 // Twilio posts application/x-www-form-urlencoded here when someone dials a
@@ -210,7 +211,7 @@ export async function POST(req: NextRequest) {
     // att lägga på nådde skarpa samtal — bara testsamtalen i webbläsaren.
     const agentOverride: Record<string, unknown> = { language }
     agentOverride.prompt = {
-      prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language, {
+      prompt: buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language]), language, {
         businessName: agent.business_name ?? null,
       }),
     }

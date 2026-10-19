@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
+import { fillCallbackPlaceholder } from '@/lib/callback-time'
 
 // Backs the public "prova agenten live" page (app/prova/[shareId]).
 //
@@ -127,7 +128,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ sh
 
   return NextResponse.json({
     signedUrl: signed_url,
-    prompt: buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language, {
+    prompt: buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language]), language, {
       businessName: agent.business_name ?? null,
     }),
     welcomeMessage: agent.welcome_message || DEFAULT_WELCOME[language],

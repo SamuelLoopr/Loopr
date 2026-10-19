@@ -3,6 +3,8 @@ import { buildCallNotification } from '@/lib/call-notification'
 import { isEmailConfigured, sendEmail } from '@/lib/email'
 import { isMissingColumn } from '@/lib/db-errors'
 import type { PublicContactRequest } from '@/lib/public-calls'
+import { CALLBACK_PLACEHOLDER, promisedCallback } from '@/lib/callback-time'
+import { parseTranscript } from '@/lib/call-transcript'
 
 // Skickar notisen för ett färdiganalyserat samtal — anropas från
 // lib/call-sync.ts direkt efter att analysen sparats.
@@ -35,6 +37,7 @@ interface ClaimedRow {
   contact_request: string | null
   contact_note: string | null
   created_at: string
+  transcript: string | null
 }
 
 const REQUESTS: readonly PublicContactRequest[] = ['meeting', 'quote', 'callback']
@@ -86,7 +89,7 @@ export async function notifyCompletedCall(
     .eq('agent_id', agent.id)
     .is('notified_at', null)
     .gte('created_at', cutoff)
-    .select('public_ref, caller_name, from_number, summary, contact_request, contact_note, created_at')
+    .select('public_ref, caller_name, from_number, summary, contact_request, contact_note, created_at, transcript')
     .maybeSingle()
 
   if (error) {
@@ -109,10 +112,18 @@ export async function notifyCompletedCall(
     .maybeSingle()
   const givenNumber = (extra as { callback_number?: string | null } | null)?.callback_number ?? null
 
+  // Den utlovade återuppringningen, räknad som i prompten — bara om agentens
+  // prompt lovar en tid och receptionisten sa den i samtalet.
+  const { data: promptRow } = await supabase.from('agents').select('prompt_text').eq('id', agent.id).maybeSingle()
+  const promise = (promptRow?.prompt_text as string | null)?.includes(CALLBACK_PLACEHOLDER)
+    ? promisedCallback(row.created_at, parseTranscript(row.transcript))
+    : null
+
   const built = buildCallNotification({
     callerName: row.caller_name,
     fromNumber: row.from_number,
     givenNumber,
+    promisedCallback: promise?.label ?? null,
     summary: row.summary ?? 'Samtalet har ingen sammanfattning.',
     contactRequest: REQUESTS.find(r => r === row.contact_request) ?? null,
     contactNote: row.contact_note,

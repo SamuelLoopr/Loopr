@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase-server'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
+import { fillCallbackPlaceholder } from '@/lib/callback-time'
 
 // Standardtexter när agentens egna fält är tomma, och de gemensamma reglerna
 // (språk + att faktiskt lägga på), ligger i lib/shared-prompt.ts — delade med
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
   const { signed_url } = await elRes.json()
 
   const language = agent.language === 'en' ? 'en' : 'sv'
-  const prompt = buildSystemPrompt(agent.prompt_text || DEFAULT_PROMPT[language], language, {
+  const prompt = buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language]), language, {
     businessName: agent.business_name ?? null,
   })
   const welcomeMessage = agent.welcome_message || DEFAULT_WELCOME[language]

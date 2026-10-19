@@ -2,6 +2,7 @@ import { NextRequest, NextResponse, after } from 'next/server'
 import crypto from 'node:crypto'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
+import { fillCallbackPlaceholder } from '@/lib/callback-time'
 import { recordSipCall } from '@/lib/call-ingest'
 import { isMissingColumn } from '@/lib/db-errors'
 
@@ -167,7 +168,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         // Agenten ska därför ta farväl utan att lova att lägga på. Twilio-vägen
         // rörs inte — där fungerar end_call och behåller sitt standardläge.
         prompt: {
-          prompt: buildSystemPrompt(resolved.promptText || DEFAULT_PROMPT[language], language, {
+          prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language]), language, {
             canEndCall: false,
           }),
         },
