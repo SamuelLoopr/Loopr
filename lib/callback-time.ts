@@ -16,6 +16,8 @@ import { addDays, toStockholm, weekdayIndex } from '@/lib/stockholm-time'
 // testas med vanliga node.
 
 export const CALLBACK_PLACEHOLDER = '{{ATERUPPRINGNING}}'
+/** Dagens datum, så att agenten förstår "nästa vecka" och liknande. */
+export const TODAY_PLACEHOLDER = '{{IDAG}}'
 
 const WEEKDAY = ['måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag', 'söndag']
 const MONTH = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september',
@@ -131,12 +133,22 @@ export function callbackSlot(startedAt: Date | string): CallbackSlot {
 
 /**
  * Agentens prompt med {{ATERUPPRINGNING}} utbytt mot tiden för ett samtal som
- * börjar vid `startedAt`. Utan platshållare kommer exakt samma text tillbaka —
+ * börjar vid `startedAt`, och {{IDAG}} mot samtalsdagen ("måndag 19 oktober
+ * 2026"). Utan platshållare kommer exakt samma text tillbaka —
  * så alla andra agenters prompter är tecken för tecken oförändrade.
  */
 export function fillCallbackPlaceholder(prompt: string, startedAt: Date | string = new Date()): string {
-  if (!prompt.includes(CALLBACK_PLACEHOLDER)) return prompt
-  return prompt.split(CALLBACK_PLACEHOLDER).join(callbackSlot(startedAt).spoken)
+  let out = prompt
+  if (out.includes(CALLBACK_PLACEHOLDER)) out = out.split(CALLBACK_PLACEHOLDER).join(callbackSlot(startedAt).spoken)
+  if (out.includes(TODAY_PLACEHOLDER)) out = out.split(TODAY_PLACEHOLDER).join(todayText(startedAt))
+  return out
+}
+
+/** "måndag 19 oktober 2026" — samtalsdagen i svensk tid, för {{IDAG}}. */
+export function todayText(startedAt: Date | string): string {
+  const date = toStockholm(startedAt).date
+  const [y, m, d] = date.split('-').map(Number)
+  return `${WEEKDAY[weekdayIndex(date)]} ${d} ${MONTH[m - 1]} ${y}`
 }
 
 /**
