@@ -167,9 +167,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         // gånger 2026-10-03: 10–19 sekunder död linje efter agentens farväl.
         // Agenten ska därför ta farväl utan att lova att lägga på. Twilio-vägen
         // rörs inte — där fungerar end_call och behåller sitt standardläge.
+        // businessName: kundens eget namn i raden om att vara AI-receptionist.
+        // Saknar agenten business_name skickas inget, och shared-prompt faller
+        // tillbaka på LEGACY_DEFAULT_BUSINESS_NAME som förut.
         prompt: {
           prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language]), language, {
             canEndCall: false,
+            businessName: resolved.businessName ?? undefined,
           }),
         },
         first_message: resolved.welcomeMessage || DEFAULT_WELCOME[language],
@@ -182,6 +186,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
 
 interface ResolvedAgent {
   id: string
+  businessName: string | null
   promptText: string | null
   welcomeMessage: string | null
   language: string | null
@@ -217,16 +222,17 @@ async function resolveAgentForNumber(calledNumber: string | null): Promise<Resol
   }
   if (!agentId) return null
 
-  const COLS = 'id, prompt_text, welcome_message, language, voice_id, voice_stability, voice_similarity_boost, voice_speed'
+  const COLS = 'id, business_name, prompt_text, welcome_message, language, voice_id, voice_stability, voice_similarity_boost, voice_speed'
   let res = await supabase.from('agents').select(COLS).eq('id', agentId).maybeSingle()
   if (res.error && isMissingColumn(res.error)) {
-    res = await supabase.from('agents').select('id, prompt_text, welcome_message, language, voice_id').eq('id', agentId).maybeSingle()
+    res = await supabase.from('agents').select('id, business_name, prompt_text, welcome_message, language, voice_id').eq('id', agentId).maybeSingle()
   }
   if (res.error || !res.data) return null
 
   const a = res.data as Record<string, unknown>
   return {
     id: a.id as string,
+    businessName: (a.business_name as string)?.trim() || null,
     promptText: (a.prompt_text as string) ?? null,
     welcomeMessage: (a.welcome_message as string) ?? null,
     language: (a.language as string) ?? null,

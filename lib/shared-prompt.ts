@@ -51,21 +51,18 @@ UNDVIK UPPREPNINGAR
 }
 
 /**
- * Det enda anropsstället som inte skickar business_name.
+ * Namnet i raden om att vara AI-receptionist när en agent saknar business_name
+ * och anropet inte säger något om det (businessName utelämnat).
  *
- * ── ÖVERGÅNGSLÖSNING, TA BORT NÄR conversation-init SKICKAR NAMNET ─────────
- * app/api/webhooks/elevenlabs/conversation-init (SIP-vägen) anropar
- * buildSystemPrompt utan businessName, och den routen fick inte röras när
- * hårdkodningen togs bort 2026-10-12. För att Bentus SIP-prompt skulle bli
- * tecken-identisk måste ett UTELÄMNAT namn därför fortfarande ge "Bentus AB".
+ * Bara conversation-init (SIP-vägen) utelämnar namnet, och bara när agenten
+ * saknar business_name. Förut skickade den aldrig namnet, och Bentus var den
+ * enda kunden på SIP-vägen; fallbacken fanns för att hans SIP-prompt skulle
+ * vara tecken-identisk när hårdkodningen togs bort 2026-10-12. Sedan
+ * 2026-10-20 skickar conversation-init agentens eget business_name, så den
+ * här konstanten används inte för någon agent som har ett namn.
  *
- * Det är bara säkert för att Bentus är den enda kunden på SIP-vägen i dag.
- * Rättelsen är en rad i conversation-init: hämta business_name och skicka med
- * det. Därefter ska den här konstanten och undefined-fallet bort.
- *
- * Skillnaden mot ett TOMT namn är avsiktlig: en route som uppdaterats och
- * skickar null (agenten saknar business_name) får den generiska texten, aldrig
- * Bentus. Bara en route som inte uppdaterats alls får det här värdet.
+ * Skillnaden mot ett TOMT namn är avsiktlig: en route som skickar null
+ * (agenten saknar business_name) får den generiska texten, aldrig Bentus.
  */
 export const LEGACY_DEFAULT_BUSINESS_NAME = 'Bentus AB'
 
@@ -157,10 +154,26 @@ export interface PromptOptions {
    *
    *   sträng      används som det är
    *   null / ''   generisk text utan företagsnamn — aldrig ett annat företags
-   *   utelämnat   LEGACY_DEFAULT_BUSINESS_NAME, bara för SIP-routen som ännu
-   *               inte skickar namnet. Se kommentaren vid konstanten.
+   *   utelämnat   LEGACY_DEFAULT_BUSINESS_NAME. Bara SIP-routen, och bara när
+   *               agenten saknar namn. Se kommentaren vid konstanten.
    */
   businessName?: string | null
+}
+
+/**
+ * Platshållare i kundens prompt för "du kan lägga på nu" i avslutet.
+ *
+ * Där agenten kan lägga på själv (Twilio, testsamtal) blir den tom, så
+ * "Ha en fin dag{{LAGG_PA}}, hejdå!" blir "Ha en fin dag, hejdå!" — samma text
+ * som innan platshållaren fanns. På SIP-vägen, där den inte kan det, blir det
+ * "Ha en fin dag. Du kan lägga på nu, hejdå!". Kundens eget avslut och
+ * END_CALL_SV_NO_HANGUP säger då samma sak i stället för att dra åt olika håll.
+ */
+export const HANG_UP_PLACEHOLDER = '{{LAGG_PA}}'
+
+const HANG_UP_TEXT: Record<PromptLanguage, string> = {
+  sv: '. Du kan lägga på nu',
+  en: '. You can hang up now',
 }
 
 /**
@@ -184,9 +197,10 @@ export function buildSystemPrompt(
     : (canEndCall ? END_CALL_EN : END_CALL_EN_NO_HANGUP)
   const language_ = language === 'sv' ? LANGUAGE_SV : LANGUAGE_EN
   const speaking = language === 'sv' ? speakingSv(company) : SPEAKING_EN
+  const base = basePrompt.split(HANG_UP_PLACEHOLDER).join(canEndCall ? '' : HANG_UP_TEXT[language])
   // Språkregeln först, sedan hur rösten ska låta, sedan mekaniken, sist
   // kundens egen text. Reglerna före så de gäller även när kundtexten är lång.
-  return `${language_}\n\n${speaking}\n\n${endCall}\n\n${basePrompt}`
+  return `${language_}\n\n${speaking}\n\n${endCall}\n\n${base}`
 }
 
 /** Standardprompt när kundens agent saknar egen text. */
