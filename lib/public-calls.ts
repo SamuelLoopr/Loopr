@@ -59,6 +59,11 @@ export interface PublicCall {
    * en tid, och bara när receptionisten faktiskt sa den.
    */
   promisedCallback?: string
+  /**
+   * Sms-bekräftelsen efter samtalet och svar på den (043, lib/call-sms.ts).
+   * Bara i klientläge och bara för agenter som skickar sms.
+   */
+  sms?: PublicSms
   /** Set by the client on this page. */
   status: ClientStatus
   /** The client's own note, shown exactly as they wrote it. */
@@ -66,6 +71,15 @@ export interface PublicCall {
   /** Calendar bookings made from this call (client mode only). */
   bookings: PublicBooking[]
   transcript: { speaker: Speaker; text: string }[]
+}
+
+export interface PublicSms {
+  /** När 46elks tog emot sms:et; null när det inte skickades. */
+  sentAt: string | null
+  /** Ett utskick försöktes men gick inte. */
+  failed: boolean
+  /** Svar som kommit in på sms:et, äldst först. */
+  replies: { at: string; text: string }[]
 }
 
 export interface PublicCallsResponse {
@@ -139,6 +153,8 @@ export function toPublicCall(
     mentionsHealth: (text: string) => boolean
     /** Agentens prompt lovar en återuppringningstid ({{ATERUPPRINGNING}}). */
     promisesCallback?: boolean
+    /** Sms-utfallet för samtalet, bara när routen satt det (klientläge, sms på). */
+    sms?: PublicSms
   },
 ): PublicCall {
   const transcript = parseTranscript(row.transcript).map(t => ({
@@ -167,6 +183,7 @@ export function toPublicCall(
     ...(callable ? { callbackNumber: callable } : {}),
     ...(given && given !== callable ? { givenNumber: given } : {}),
     ...(promise ? { promisedCallback: promise.label } : {}),
+    ...(opts.sms ? { sms: { ...opts.sms, replies: opts.sms.replies.map(r => ({ at: r.at, text: redactPii(r.text) })) } } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
     bookings: opts.bookings ?? [],

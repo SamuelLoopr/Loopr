@@ -9,7 +9,7 @@ import { CLIENT_NOTE_MAX, type ClientStatus } from '@/lib/client-status'
 import { CONTACT_REQUEST_LABEL, type PublicCall } from '@/lib/public-calls'
 import { formatBookingWhen, toStockholm } from '@/lib/stockholm-time'
 import { GROUPS, formatDuration, fullWhen, groupOf, offHours, searchHit, statusForGroup } from './logic'
-import { CallNumbers, OffHoursBadge, PromisedCallback, StatusBadge, cx } from './ui'
+import { CallNumbers, OffHoursBadge, PromisedCallback, SmsLine, StatusBadge, cx } from './ui'
 import s from './bos.module.css'
 
 // Det valda ärendet, i en panel bredvid listan: allt om samtalet, status,
@@ -83,7 +83,22 @@ export default function CasePanel({
         {!call.callbackNumber && !call.givenNumber && <p className={s.help}>Numret var dolt eller saknas.</p>}
         {!call.callbackNumber && call.givenNumber && <p className={s.help}>Kunden ringde med dolt nummer och gav det här numret att ringa upp på.</p>}
         {call.promisedCallback && <PromisedCallback label={call.promisedCallback} />}
+        {call.sms && <SmsLine sms={call.sms} />}
       </section>
+
+      {call.sms && call.sms.replies.length > 0 && (
+        <section className={s.panelSection}>
+          <h3 className={s.sectionLabel}>Sms-svar från kunden</h3>
+          <ul className={s.smsReplyList}>
+            {call.sms.replies.map((r, i) => (
+              <li key={i} className={s.smsReply}>
+                <time dateTime={r.at} className={s.smsReplyWhen}>{fullWhen(r.at)}</time>
+                <p className={s.bodyText}>{r.text}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className={s.panelSection}>
         <h3 className={s.sectionLabel}>Vad kunden vill</h3>

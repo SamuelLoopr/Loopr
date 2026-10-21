@@ -3,7 +3,7 @@ import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { countProcessingCalls, syncAgentCalls } from '@/lib/call-sync'
 import { isMissingColumn, isMissingTable } from '@/lib/db-errors'
 import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
-import { toPublicCall, type CallRow, type PublicCallsResponse } from '@/lib/public-calls'
+import { toPublicCall, type CallRow, type PublicCallsResponse, type PublicSms } from '@/lib/public-calls'
 import { mentionsHealth } from '@/lib/call-insights'
 import { CALLBACK_PLACEHOLDER } from '@/lib/callback-time'
 import { BOOKING_COLS, toPublicBooking, type BookingRow, type PublicBooking } from '@/lib/public-bookings'
@@ -168,6 +168,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
   const { data: promptRow } = await supabase.from('agents').select('prompt_text').eq('id', agent.id).maybeSingle()
   const promisesCallback = Boolean((promptRow?.prompt_text as string | null)?.includes(CALLBACK_PLACEHOLDER))
 
+  const smsByCall = agent.clientMode ? await loadSms(supabase, agent.id, rows.map(r => r.id)) : new Map<string, PublicSms>()
+
   const body: PublicCallsResponse = {
     calls: rows.map(row =>
       toPublicCall(row, {
@@ -175,6 +177,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         bookings: bookingsByCall.get(row.id),
         mentionsHealth,
         promisesCallback,
+        sms: smsByCall.get(row.id),
       }),
     ),
     processing: await countProcessingCalls(supabase, agent.id),
@@ -183,4 +186,54 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
   }
 
   return NextResponse.json(body, { headers: NO_STORE })
+}
+
+/**
+ * Sms-utfallet och svaren per samtal (043), för agenter som skickar sms.
+ * Läses för sig: saknas kolumnerna eller tabellen, eller är sms av, blir det
+ * bara inga sms-uppgifter på sidan — samtalen visas som vanligt.
+ */
+async function loadSms(
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  agentId: string,
+  callIds: string[],
+): Promise<Map<string, PublicSms>> {
+  const out = new Map<string, PublicSms>()
+  if (callIds.length === 0) return out
+
+  const { data: agent } = await supabase.from('agents').select('sms_enabled').eq('id', agentId).maybeSingle()
+  if (agent?.sms_enabled !== true) return out
+
+  const { data: calls, error } = await supabase
+    .from('call_logs')
+    .select('id, sms_sent_at, sms_error')
+    .eq('agent_id', agentId)
+    .in('id', callIds)
+  if (error) {
+    if (!isMissingColumn(error)) console.error('[public-agent/calls] Kunde inte läsa sms:', error.message)
+    return out
+  }
+  for (const c of calls ?? []) {
+    if (c.sms_sent_at || c.sms_error) {
+      out.set(c.id as string, { sentAt: (c.sms_sent_at as string | null) ?? null, failed: !c.sms_sent_at, replies: [] })
+    }
+  }
+
+  const { data: replies, error: replyError } = await supabase
+    .from('call_sms_replies')
+    .select('call_log_id, message, received_at')
+    .eq('agent_id', agentId)
+    .in('call_log_id', callIds)
+    .order('received_at', { ascending: true })
+  if (replyError) {
+    if (!isMissingTable(replyError)) console.error('[public-agent/calls] Kunde inte läsa sms-svar:', replyError.message)
+    return out
+  }
+  for (const r of replies ?? []) {
+    const id = r.call_log_id as string
+    const entry = out.get(id) ?? { sentAt: null, failed: false, replies: [] }
+    entry.replies.push({ at: r.received_at as string, text: r.message as string })
+    out.set(id, entry)
+  }
+  return out
 }

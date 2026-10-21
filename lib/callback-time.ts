@@ -10,6 +10,7 @@ import { addDays, toStockholm, weekdayIndex } from '@/lib/stockholm-time'
 //     talade texten vid varje samtal (fillCallbackPlaceholder)
 //   - i BOS och notismejlet: "Utlovad återuppringning: tisdag 21 oktober, 10–16"
 //     (promisedCallback), räknat ur samtalets starttid
+//   - i sms:et efter samtalet (lib/callback-sms.ts), med samma dag
 //
 // Dagarna är svenska dagar oavsett var servern står (lib/stockholm-time.ts).
 // Fri från imports av servergrejer, så den fungerar i webbläsaren och kan
@@ -18,6 +19,13 @@ import { addDays, toStockholm, weekdayIndex } from '@/lib/stockholm-time'
 export const CALLBACK_PLACEHOLDER = '{{ATERUPPRINGNING}}'
 /** Dagens datum, så att agenten förstår "nästa vecka" och liknande. */
 export const TODAY_PLACEHOLDER = '{{IDAG}}'
+/**
+ * ", och du får ett sms med tiden" när ett sms faktiskt kommer att skickas
+ * (lib/callback-sms.ts), annars tom. Tom också där inget nummer finns, som i
+ * testsamtalen i webbläsaren — då lovas inget sms.
+ */
+export const SMS_PLACEHOLDER = '{{SMS_RAD}}'
+export const SMS_LINE = ', och du får ett sms med tiden'
 
 const WEEKDAY = ['måndag', 'tisdag', 'onsdag', 'torsdag', 'fredag', 'lördag', 'söndag']
 const MONTH = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september',
@@ -95,6 +103,8 @@ export interface CallbackSlot {
   date: string
   /** true = "måndag förmiddag" (efter en helg); false = mellan klockan 10 och 16. */
   morning: boolean
+  /** Dagen utskriven: "tisdag 21 oktober". Samma i BOS, mejlet och sms:et. */
+  day: string
   /** Det receptionisten säger: "imorgon, tisdag, mellan klockan 10 och 16". */
   spoken: string
   /** Det BOS och notismejlet visar: "tisdag 21 oktober, 10–16". */
@@ -127,20 +137,27 @@ export function callbackSlot(startedAt: Date | string): CallbackSlot {
       : `på ${WEEKDAY[weekday]} mellan klockan 10 och 16`
 
   const [, m, d] = date.split('-').map(Number)
-  const label = `${WEEKDAY[weekday]} ${d} ${MONTH[m - 1]}, ${morning ? 'förmiddag' : '10–16'}`
-  return { date, morning, spoken, label }
+  const day = `${WEEKDAY[weekday]} ${d} ${MONTH[m - 1]}`
+  const label = `${day}, ${morning ? 'förmiddag' : '10–16'}`
+  return { date, morning, day, spoken, label }
 }
 
 /**
  * Agentens prompt med {{ATERUPPRINGNING}} utbytt mot tiden för ett samtal som
- * börjar vid `startedAt`, och {{IDAG}} mot samtalsdagen ("måndag 19 oktober
- * 2026"). Utan platshållare kommer exakt samma text tillbaka —
- * så alla andra agenters prompter är tecken för tecken oförändrade.
+ * börjar vid `startedAt`, {{IDAG}} mot samtalsdagen ("måndag 19 oktober
+ * 2026") och {{SMS_RAD}} mot SMS_LINE när `sms` är sant, annars tomt. Utan
+ * platshållare kommer exakt samma text tillbaka — så alla andra agenters
+ * prompter är tecken för tecken oförändrade.
  */
-export function fillCallbackPlaceholder(prompt: string, startedAt: Date | string = new Date()): string {
+export function fillCallbackPlaceholder(
+  prompt: string,
+  startedAt: Date | string = new Date(),
+  { sms = false }: { sms?: boolean } = {},
+): string {
   let out = prompt
   if (out.includes(CALLBACK_PLACEHOLDER)) out = out.split(CALLBACK_PLACEHOLDER).join(callbackSlot(startedAt).spoken)
   if (out.includes(TODAY_PLACEHOLDER)) out = out.split(TODAY_PLACEHOLDER).join(todayText(startedAt))
+  if (out.includes(SMS_PLACEHOLDER)) out = out.split(SMS_PLACEHOLDER).join(sms ? SMS_LINE : '')
   return out
 }
 

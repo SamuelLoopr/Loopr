@@ -1,9 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { FiAlertTriangle, FiCheck, FiClock, FiCopy, FiMoon, FiPhone } from 'react-icons/fi'
+import { FiAlertTriangle, FiCheck, FiClock, FiCopy, FiMessageSquare, FiMoon, FiPhone } from 'react-icons/fi'
 import type { ClientStatus } from '@/lib/client-status'
 import { CLIENT_STATUS_LABEL } from '@/lib/client-status'
+import type { PublicSms } from '@/lib/public-calls'
+import { toStockholm } from '@/lib/stockholm-time'
 import { OFF_HOURS_LABEL, formatPhone, groupLabel, groupOf, type OffHours } from './logic'
 import s from './bos.module.css'
 
@@ -141,6 +143,25 @@ export function PromisedCallback({ label }: { label: string }) {
     <p className={cx(s.promise, s.lift)}>
       <FiClock aria-hidden="true" size={14} className={s.promiseIcon} />
       <span><span className={s.promiseLabel}>Utlovad återuppringning:</span> {label}</span>
+    </p>
+  )
+}
+
+/**
+ * Sms-bekräftelsen efter samtalet (lib/call-sms.ts) och antalet svar på den.
+ * `compact` på korten: bara svaren, eftersom de är det kontoret måste läsa.
+ */
+export function SmsLine({ sms, compact = false }: { sms: PublicSms; compact?: boolean }) {
+  const replies = sms.replies.length
+  if (compact && replies === 0) return null
+  const sent = sms.sentAt ? toStockholm(sms.sentAt) : null
+  return (
+    <p className={cx(s.smsLine, sms.failed && !compact && s.smsFailed, s.lift)}>
+      <FiMessageSquare aria-hidden="true" size={13} />
+      {!compact && (sent
+        ? <span>Sms med tiden skickat {sent.time}</span>
+        : sms.failed ? <span>Sms:et kunde inte skickas</span> : null)}
+      {replies > 0 && <strong className={s.smsReplies}>{replies === 1 ? '1 sms-svar' : `${replies} sms-svar`}</strong>}
     </p>
   )
 }

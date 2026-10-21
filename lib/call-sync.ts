@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { classifyCall, INSIGHT_VERSION, type CallInsight } from '@/lib/call-insights'
 import { isMissingColumn } from '@/lib/db-errors'
 import { notifyCompletedCall, type NotifyAgent } from '@/lib/call-notify'
+import { sendCallbackSms } from '@/lib/call-sms'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
 // Completes call_logs rows for real inbound calls, from ElevenLabs' own record.
@@ -448,6 +449,13 @@ export async function enrichRow(
   // förfrågan faktiskt finns att mejla (028 och framåt). Notisen får aldrig
   // fälla synken, så den är isolerad.
   if (mode === 'versioned') {
+    // Sms-bekräftelsen till den som ringde (lib/call-sms.ts). Före mejlet,
+    // eftersom den som just lagt på väntar på den; isolerad på samma sätt.
+    try {
+      await sendCallbackSms(supabase, agent.id, row.id)
+    } catch (err) {
+      console.error('[call-sync] Sms kastade:', err)
+    }
     try {
       await notifyCompletedCall(supabase, agent, row.id)
     } catch (err) {

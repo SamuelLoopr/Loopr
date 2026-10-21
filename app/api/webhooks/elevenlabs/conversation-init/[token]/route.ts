@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 import { fillCallbackPlaceholder } from '@/lib/callback-time'
+import { promiseSms } from '@/lib/callback-sms'
 import { recordSipCall } from '@/lib/call-ingest'
 import { isMissingColumn } from '@/lib/db-errors'
 
@@ -112,7 +113,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   let resolved: ResolvedAgent | null = null
   try {
     resolved = await Promise.race([
-      resolveAgentForNumber(calledNumber),
+      resolveAgentForNumber(calledNumber, callerId),
       new Promise<null>(r => setTimeout(() => r(null), LOOKUP_BUDGET_MS)),
     ])
   } catch (err) {
@@ -171,7 +172,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         // Saknar agenten business_name skickas inget, och shared-prompt faller
         // tillbaka på LEGACY_DEFAULT_BUSINESS_NAME som förut.
         prompt: {
-          prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language]), language, {
+          prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language], new Date(), {
+            sms: resolved.promiseSms,
+          }), language, {
             canEndCall: false,
             businessName: resolved.businessName ?? undefined,
           }),
@@ -194,6 +197,8 @@ interface ResolvedAgent {
   stability: number | null
   similarityBoost: number | null
   speed: number | null
+  /** {{SMS_RAD}} lovar ett sms (lib/callback-sms.ts). */
+  promiseSms: boolean
 }
 
 /**
@@ -204,7 +209,7 @@ interface ResolvedAgent {
  * normalisering behövs — men jämförelsen på siffror finns kvar som skydd mot
  * äldre rader med mellanslag eller 00-prefix.
  */
-async function resolveAgentForNumber(calledNumber: string | null): Promise<ResolvedAgent | null> {
+async function resolveAgentForNumber(calledNumber: string | null, callerId: string | null): Promise<ResolvedAgent | null> {
   if (!calledNumber) return null
 
   const supabase = createSupabaseServiceClient()
@@ -240,5 +245,7 @@ async function resolveAgentForNumber(calledNumber: string | null): Promise<Resol
     stability: (a.voice_stability as number) ?? null,
     similarityBoost: (a.voice_similarity_boost as number) ?? null,
     speed: (a.voice_speed as number) ?? null,
+    // Inom samma tidsbudget som resten av uppslagningen. Fel ger inget löfte.
+    promiseSms: await promiseSms(supabase, a.id as string, (a.prompt_text as string) ?? null, callerId).catch(() => false),
   }
 }

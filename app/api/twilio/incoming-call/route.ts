@@ -4,6 +4,7 @@ import { matchTwilioSignature, webhookUrlCandidates } from '@/lib/twilio-signatu
 import { normalizeE164 } from '@/lib/phone'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 import { fillCallbackPlaceholder } from '@/lib/callback-time'
+import { promiseSms } from '@/lib/callback-sms'
 import { withPauseAfterStream } from '@/lib/twiml-pause'
 import { isMissingColumn } from '@/lib/db-errors'
 
@@ -211,8 +212,11 @@ export async function POST(req: NextRequest) {
     // rakt av här, vilket gjorde att varken språkregeln eller instruktionen om
     // att lägga på nådde skarpa samtal — bara testsamtalen i webbläsaren.
     const agentOverride: Record<string, unknown> = { language }
+    // {{SMS_RAD}}: lova ett sms bara när ett faktiskt kommer (lib/callback-sms.ts).
+    // Ett fel här får aldrig fälla samtalet — då lovas inget sms.
+    const sms = await promiseSms(supabase, agent.id, agent.prompt_text, from).catch(() => false)
     agentOverride.prompt = {
-      prompt: buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language]), language, {
+      prompt: buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language], new Date(), { sms }), language, {
         businessName: agent.business_name ?? null,
       }),
     }
