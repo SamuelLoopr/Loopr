@@ -163,7 +163,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
       agent: {
         // Gemensamma regler + kundens egen text, samma funktion som
         // telefonvägen använder. Inte kundens prompt_text rakt av.
-        // canEndCall: false — SIP-vägen tappar ElevenLabs SIP BYE, så end_call
+        // canEndCall: false som standard — SIP-vägen tappar ElevenLabs SIP BYE, så end_call
         // avslutar konversationen medan telefonlinjen ligger kvar. Uppmätt tre
         // gånger 2026-10-03: 10–19 sekunder död linje efter agentens farväl.
         // Agenten ska därför ta farväl utan att lova att lägga på. Twilio-vägen
@@ -175,7 +175,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language], new Date(), {
             sms: resolved.promiseSms,
           }), language, {
-            canEndCall: false,
+            canEndCall: resolved.sipCanEndCall,
             businessName: resolved.businessName ?? undefined,
           }),
         },
@@ -197,6 +197,8 @@ interface ResolvedAgent {
   stability: number | null
   similarityBoost: number | null
   speed: number | null
+  /** agents.sip_can_end_call (044): end_call även på SIP. Standard false. */
+  sipCanEndCall: boolean
   /** {{SMS_RAD}} lovar ett sms (lib/callback-sms.ts). */
   promiseSms: boolean
 }
@@ -245,7 +247,17 @@ async function resolveAgentForNumber(calledNumber: string | null, callerId: stri
     stability: (a.voice_stability as number) ?? null,
     similarityBoost: (a.voice_similarity_boost as number) ?? null,
     speed: (a.voice_speed as number) ?? null,
+    sipCanEndCall: await sipCanEndCall(supabase, a.id as string),
     // Inom samma tidsbudget som resten av uppslagningen. Fel ger inget löfte.
     promiseSms: await promiseSms(supabase, a.id as string, (a.prompt_text as string) ?? null, callerId).catch(() => false),
   }
+}
+
+/**
+ * agents.sip_can_end_call (044), läst för sig: saknas kolumnen eller går
+ * något fel gäller false, alltså dagens beteende.
+ */
+async function sipCanEndCall(supabase: ReturnType<typeof createSupabaseServiceClient>, agentId: string): Promise<boolean> {
+  const { data, error } = await supabase.from('agents').select('sip_can_end_call').eq('id', agentId).maybeSingle()
+  return !error && data?.sip_can_end_call === true
 }
