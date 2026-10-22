@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { hangUpConversation } from '@/lib/elks-hangup'
@@ -8,12 +8,19 @@ import { hangUpConversation } from '@/lib/elks-hangup'
 // påläggningen sker hos 46elks (lib/elks-hangup.ts).
 //
 // Samma skydd som conversation-init: ELEVENLABS_INIT_TOKEN i vägen och
-// ELEVENLABS_INIT_SECRET i headern x-loopr-init-secret. Svaret till
-// ElevenLabs går direkt; påläggningen körs efteråt.
+// ELEVENLABS_INIT_SECRET i headern x-loopr-init-secret.
+//
+// Svaret går först NÄR samtalet är pålagt. Agenten talar annars igen när
+// verktygets svar kommer (prövat 2026-10-22: "Mm, ska vi se… The call has
+// been successfully ended."). Har vi redan lagt på finns ingen linje kvar att
+// tala på. Verktygets tidsgräns hos ElevenLabs är 10 s; vi ger upp efter 8.
 
 export const dynamic = 'force-dynamic'
 
 const SECRET_HEADER = 'x-loopr-init-secret'
+
+/** Under verktygets tidsgräns hos ElevenLabs (10 s). */
+const ROUTE_BUDGET_MS = 8_000
 
 function equals(a: string, b: string): boolean {
   const bufA = Buffer.from(a)
@@ -42,12 +49,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const calledNumber = typeof body.called_number === 'string' ? body.called_number.trim() : ''
   const callerId = typeof body.caller_id === 'string' ? body.caller_id.trim() || null : null
 
-  after(
+  const outcome = await Promise.race([
     hangUpConversation(createSupabaseServiceClient(), { conversationId, calledNumber, callerId })
-      .then(outcome => console.log(`[elevenlabs/hangup] ${conversationId || '?'}: ${outcome}`))
-      .catch(err => console.error('[elevenlabs/hangup] Kastade:', err)),
-  )
+      .catch(err => { console.error('[elevenlabs/hangup] Kastade:', err); return 'failed' as const }),
+    new Promise<'timeout'>(r => setTimeout(() => r('timeout'), ROUTE_BUDGET_MS)),
+  ])
+  console.log(`[elevenlabs/hangup] ${conversationId || '?'}: ${outcome}`)
 
-  // Agenten ska inte säga något mer; svaret är bara en kvittens.
-  return NextResponse.json({ ok: true })
+  // Lades samtalet inte på ska agenten ändå inte säga något mer.
+  return NextResponse.json({ result: 'Samtalet är avslutat. Säg ingenting mer.' })
 }

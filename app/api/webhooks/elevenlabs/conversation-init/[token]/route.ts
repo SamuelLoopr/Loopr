@@ -153,7 +153,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   if (!resolved) return NextResponse.json(PASSTHROUGH)
 
   const language = resolved.language === 'en' ? 'en' : 'sv'
-  // Verktyget finns bara när det är skapat hos ElevenLabs och id:t satt i miljön.
+  // lagg_pa sitter på en egen ElevenLabs-agent som numret är kopplat till —
+  // ElevenLabs godtar inte tool_ids för verktyg agenten inte redan har
+  // ("Tool IDs not attached to this agent", 2026-10-22). Här styrs bara
+  // prompten, och bara när verktyget finns (ELEVENLABS_HANGUP_TOOL_ID satt).
   const hangupTool = resolved.sipHangupTool ? process.env.ELEVENLABS_HANGUP_TOOL_ID?.trim() || null : null
 
   const tts: Record<string, unknown> = {}
@@ -184,9 +187,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             businessName: resolved.businessName ?? undefined,
             ...(hangupTool ? { hangUpTool: HANGUP_TOOL_NAME } : {}),
           }),
-          // lagg_pa (lib/elks-hangup.ts) läggs till för det här samtalet bara
-          // när agenten har sip_hangup_tool. SIP-agentens egna verktyg rörs inte.
-          ...(hangupTool ? { tool_ids: [hangupTool] } : {}),
         },
         first_message: resolved.welcomeMessage || DEFAULT_WELCOME[language],
         language,
