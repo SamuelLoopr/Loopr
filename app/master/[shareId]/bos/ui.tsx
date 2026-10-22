@@ -137,14 +137,28 @@ export function CallNumbers({ from, given, big = false }: { from?: string; given
   )
 }
 
-/** Tiden receptionisten lovade att kontoret ringer tillbaka (lib/callback-time.ts). */
-export function PromisedCallback({ label }: { label: string }) {
+/**
+ * Tiden receptionisten lovade att kontoret ringer tillbaka (lib/callback-time.ts).
+ * Har löftet passerats och ärendet fortfarande är nytt blir raden röd.
+ */
+export function PromisedCallback({ label, deadline, overdue = false }: { label: string; deadline?: string; overdue?: boolean }) {
+  const passed = overdue && deadline ? toStockholm(deadline).time : null
   return (
-    <p className={cx(s.promise, s.lift)}>
-      <FiClock aria-hidden="true" size={14} className={s.promiseIcon} />
-      <span><span className={s.promiseLabel}>Utlovad återuppringning:</span> {label}</span>
+    <p className={cx(s.promise, passed && s.promiseOverdue, s.lift)}>
+      {passed
+        ? <FiAlertTriangle aria-hidden="true" size={14} className={s.promiseIcon} />
+        : <FiClock aria-hidden="true" size={14} className={s.promiseIcon} />}
+      <span>
+        <span className={s.promiseLabel}>Utlovad återuppringning:</span> {label}
+        {passed && <strong className={s.promiseOverdueText}> · Löftet passerade {passed}</strong>}
+      </span>
     </p>
   )
+}
+
+/** Har löftet passerats medan ärendet fortfarande är nytt? */
+export function promiseOverdue(call: { promisedCallbackDeadline?: string; status: string }, now: number = Date.now()): boolean {
+  return Boolean(call.promisedCallbackDeadline) && call.status === 'ny' && now > new Date(call.promisedCallbackDeadline!).getTime()
 }
 
 /**

@@ -764,6 +764,17 @@
   font-weight: 700;
 }
 
+/* Löftet har passerats och ärendet är fortfarande nytt. */
+.promiseOverdue {
+  background: var(--danger-soft);
+}
+
+.promiseOverdue .promiseIcon,
+.promiseOverdue .promiseLabel,
+.promiseOverdueText {
+  color: var(--danger);
+}
+
 .smsLine {
   display: flex;
   align-items: center;

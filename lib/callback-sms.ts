@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { fromStockholm } from '@/lib/stockholm-time'
+import { fromStockholm, toStockholm } from '@/lib/stockholm-time'
 import { SMS_PLACEHOLDER, type CallbackSlot } from '@/lib/callback-time'
 
 // Sms-bekräftelsen av återuppringningen: vem den går till, vad den säger och
@@ -53,8 +53,9 @@ export function firstName(callerName: string | null | undefined): string | null 
  */
 export function callbackSmsText(businessName: string, name: string | null, slot: CallbackSlot): string {
   const greeting = name ? `${businessName}, ${name}` : businessName
-  const when = slot.morning ? `${slot.day} på förmiddagen` : `${slot.day} mellan 10 och 16`
-  return `Tack för ditt samtal till ${greeting}! En av våra experter ringer dig ${when}. Du behöver inte göra något mer.`
+  const when = slot.kind === 'within_hour' ? slot.spoken
+    : slot.morning ? `${slot.day} på förmiddagen` : `${slot.day} mellan 10 och 16`
+  return `Tack för ditt samtal till ${greeting}! En av våra medarbetare ringer dig ${when}. Du behöver inte göra något mer.`
 }
 
 /** Hur gammalt ett samtal får vara när sms:et skickas. */
@@ -68,7 +69,11 @@ export const SMS_MAX_AGE_MS = 12 * 60 * 60 * 1000
  */
 export function smsStillTimely(startedAt: string, slot: CallbackSlot, now: Date = new Date()): boolean {
   const age = now.getTime() - new Date(startedAt).getTime()
-  return age >= 0 && age <= SMS_MAX_AGE_MS && now < fromStockholm(slot.date, '08:00')
+  if (age < 0 || age > SMS_MAX_AGE_MS) return false
+  // Med en egen regel (046): så länge löftet inte passerats. "Inom en timme"
+  // och "idag på förmiddagen" gäller ju samma dag.
+  if (slot.kind === 'within_hour' || slot.date === toStockholm(startedAt).date) return now < new Date(slot.deadline)
+  return now < fromStockholm(slot.date, '08:00')
 }
 
 /**

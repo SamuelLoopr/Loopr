@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { isMissingColumn } from '@/lib/db-errors'
 import { mentionsHealth } from '@/lib/call-insights'
 import { CALLBACK_PLACEHOLDER, promisedCallback } from '@/lib/callback-time'
+import { callbackRuleFor } from '@/lib/callback-rule'
 import { callbackSmsText, firstName, mentionsPrice, smsRecipient, smsStillTimely } from '@/lib/callback-sms'
 import { parseTranscript } from '@/lib/call-transcript'
 import { scrubNumbers, sendSms, type SmsResult } from '@/lib/sms'
@@ -77,7 +78,8 @@ export async function sendCallbackSms(
   }
   const call = callData as CallSms
 
-  const slot = promisedCallback(call.created_at, parseTranscript(call.transcript))
+  const rule = await callbackRuleFor(supabase, agentId, agent.prompt_text)
+  const slot = promisedCallback(call.created_at, parseTranscript(call.transcript), rule)
   if (!slot) return 'not_promised'
   const to = smsRecipient(call.callback_number, call.from_number)
   if (!to) return 'no_mobile'

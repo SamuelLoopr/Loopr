@@ -6,6 +6,7 @@ import { resolveShareAgent, sectionOn } from '@/lib/share-agent'
 import { toPublicCall, type CallRow, type PublicCallsResponse, type PublicSms } from '@/lib/public-calls'
 import { mentionsHealth } from '@/lib/call-insights'
 import { CALLBACK_PLACEHOLDER } from '@/lib/callback-time'
+import { callbackRuleFor } from '@/lib/callback-rule'
 import { BOOKING_COLS, toPublicBooking, type BookingRow, type PublicBooking } from '@/lib/public-bookings'
 
 // Backs the calls section of the public BOS page (app/master/[shareId]): the
@@ -167,6 +168,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
   // prompten själv lämnar aldrig servern.
   const { data: promptRow } = await supabase.from('agents').select('prompt_text').eq('id', agent.id).maybeSingle()
   const promisesCallback = Boolean((promptRow?.prompt_text as string | null)?.includes(CALLBACK_PLACEHOLDER))
+  const callbackRule = await callbackRuleFor(supabase, agent.id, promptRow?.prompt_text as string | null)
 
   const smsByCall = agent.clientMode ? await loadSms(supabase, agent.id, rows.map(r => r.id)) : new Map<string, PublicSms>()
 
@@ -177,6 +179,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ sha
         bookings: bookingsByCall.get(row.id),
         mentionsHealth,
         promisesCallback,
+        callbackRule,
         sms: smsByCall.get(row.id),
       }),
     ),

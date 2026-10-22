@@ -5,6 +5,7 @@ import { normalizeE164 } from '@/lib/phone'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 import { fillCallbackPlaceholder } from '@/lib/callback-time'
 import { promiseSms } from '@/lib/callback-sms'
+import { callbackRuleFor } from '@/lib/callback-rule'
 import { withPauseAfterStream } from '@/lib/twiml-pause'
 import { isMissingColumn } from '@/lib/db-errors'
 
@@ -215,8 +216,10 @@ export async function POST(req: NextRequest) {
     // {{SMS_RAD}}: lova ett sms bara när ett faktiskt kommer (lib/callback-sms.ts).
     // Ett fel här får aldrig fälla samtalet — då lovas inget sms.
     const sms = await promiseSms(supabase, agent.id, agent.prompt_text, from).catch(() => false)
+    // Agentens återuppringningsregel (046); null = standardregeln.
+    const rule = await callbackRuleFor(supabase, agent.id, agent.prompt_text)
     agentOverride.prompt = {
-      prompt: buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language], new Date(), { sms }), language, {
+      prompt: buildSystemPrompt(fillCallbackPlaceholder(agent.prompt_text || DEFAULT_PROMPT[language], new Date(), { sms, rule }), language, {
         businessName: agent.business_name ?? null,
       }),
     }

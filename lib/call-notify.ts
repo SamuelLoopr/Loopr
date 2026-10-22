@@ -4,6 +4,7 @@ import { isEmailConfigured, sendEmail } from '@/lib/email'
 import { isMissingColumn } from '@/lib/db-errors'
 import type { PublicContactRequest } from '@/lib/public-calls'
 import { CALLBACK_PLACEHOLDER, promisedCallback } from '@/lib/callback-time'
+import { callbackRuleFor } from '@/lib/callback-rule'
 import { parseTranscript } from '@/lib/call-transcript'
 
 // Skickar notisen för ett färdiganalyserat samtal — anropas från
@@ -115,8 +116,9 @@ export async function notifyCompletedCall(
   // Den utlovade återuppringningen, räknad som i prompten — bara om agentens
   // prompt lovar en tid och receptionisten sa den i samtalet.
   const { data: promptRow } = await supabase.from('agents').select('prompt_text').eq('id', agent.id).maybeSingle()
-  const promise = (promptRow?.prompt_text as string | null)?.includes(CALLBACK_PLACEHOLDER)
-    ? promisedCallback(row.created_at, parseTranscript(row.transcript))
+  const promptText = promptRow?.prompt_text as string | null
+  const promise = promptText?.includes(CALLBACK_PLACEHOLDER)
+    ? promisedCallback(row.created_at, parseTranscript(row.transcript), await callbackRuleFor(supabase, agent.id, promptText))
     : null
 
   const built = buildCallNotification({

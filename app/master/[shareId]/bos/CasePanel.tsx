@@ -9,7 +9,7 @@ import { CLIENT_NOTE_MAX, type ClientStatus } from '@/lib/client-status'
 import { CONTACT_REQUEST_LABEL, type PublicCall } from '@/lib/public-calls'
 import { formatBookingWhen, toStockholm } from '@/lib/stockholm-time'
 import { GROUPS, formatDuration, fullWhen, groupOf, offHours, searchHit, statusForGroup } from './logic'
-import { CallNumbers, OffHoursBadge, PromisedCallback, SmsLine, StatusBadge, cx } from './ui'
+import { CallNumbers, OffHoursBadge, PromisedCallback, SmsLine, StatusBadge, cx, promiseOverdue } from './ui'
 import s from './bos.module.css'
 
 // Det valda ärendet, i en panel bredvid listan: allt om samtalet, status,
@@ -82,7 +82,9 @@ export default function CasePanel({
         <CallNumbers from={call.callbackNumber} given={call.givenNumber} big />
         {!call.callbackNumber && !call.givenNumber && <p className={s.help}>Numret var dolt eller saknas.</p>}
         {!call.callbackNumber && call.givenNumber && <p className={s.help}>Kunden ringde med dolt nummer och gav det här numret att ringa upp på.</p>}
-        {call.promisedCallback && <PromisedCallback label={call.promisedCallback} />}
+        {call.promisedCallback && (
+          <PromisedCallback label={call.promisedCallback} deadline={call.promisedCallbackDeadline} overdue={promiseOverdue(call)} />
+        )}
         {call.sms && <SmsLine sms={call.sms} />}
       </section>
 

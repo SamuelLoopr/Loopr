@@ -5,6 +5,8 @@ import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared
 import { fillCallbackPlaceholder } from '@/lib/callback-time'
 import { promiseSms } from '@/lib/callback-sms'
 import { linkConversation } from '@/lib/elks-hangup'
+import { callbackRuleFor } from '@/lib/callback-rule'
+import type { CallbackRule } from '@/lib/callback-time'
 import { recordSipCall } from '@/lib/call-ingest'
 import { isMissingColumn } from '@/lib/db-errors'
 
@@ -186,6 +188,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
         prompt: {
           prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language], new Date(), {
             sms: resolved.promiseSms,
+            rule: resolved.callbackRule,
           }), language, {
             canEndCall: resolved.sipCanEndCall || Boolean(hangupTool),
             businessName: resolved.businessName ?? undefined,
@@ -216,6 +219,8 @@ interface ResolvedAgent {
   sipHangupTool: boolean
   /** {{SMS_RAD}} lovar ett sms (lib/callback-sms.ts). */
   promiseSms: boolean
+  /** agents.callback_rule (046); null = standardregeln. */
+  callbackRule: CallbackRule | null
 }
 
 /**
@@ -265,6 +270,7 @@ async function resolveAgentForNumber(calledNumber: string | null, callerId: stri
     ...(await sipEndCallSettings(supabase, a.id as string)),
     // Inom samma tidsbudget som resten av uppslagningen. Fel ger inget löfte.
     promiseSms: await promiseSms(supabase, a.id as string, (a.prompt_text as string) ?? null, callerId).catch(() => false),
+    callbackRule: await callbackRuleFor(supabase, a.id as string, (a.prompt_text as string) ?? null),
   }
 }
 

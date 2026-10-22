@@ -2,7 +2,7 @@ import { parseTranscript, type Speaker } from '@/lib/call-transcript'
 import { clientStatusOf, type ClientStatus } from '@/lib/client-status'
 import type { PublicBooking } from '@/lib/public-bookings'
 import { maskPhone, redactPii } from '@/lib/redact'
-import { promisedCallback } from '@/lib/callback-time'
+import { promisedCallback, type CallbackRule } from '@/lib/callback-time'
 
 // What one call looks like once it leaves the server for the public BOS page
 // (/master/[shareId]). The route builds it (toPublicCall); the page imports only
@@ -59,6 +59,12 @@ export interface PublicCall {
    * en tid, och bara när receptionisten faktiskt sa den.
    */
   promisedCallback?: string
+  /**
+   * När löftet passeras (ISO): deadline för "inom en timme", annars slutet på
+   * den utlovade förmiddagen eller dagen. Sidan varnar efter den tiden om
+   * ärendet fortfarande är nytt.
+   */
+  promisedCallbackDeadline?: string
   /**
    * Sms-bekräftelsen efter samtalet och svar på den (043, lib/call-sms.ts).
    * Bara i klientläge och bara för agenter som skickar sms.
@@ -153,6 +159,8 @@ export function toPublicCall(
     mentionsHealth: (text: string) => boolean
     /** Agentens prompt lovar en återuppringningstid ({{ATERUPPRINGNING}}). */
     promisesCallback?: boolean
+    /** Agentens återuppringningsregel (046); null = standardregeln. */
+    callbackRule?: CallbackRule | null
     /** Sms-utfallet för samtalet, bara när routen satt det (klientläge, sms på). */
     sms?: PublicSms
   },
@@ -165,7 +173,7 @@ export function toPublicCall(
   const request = REQUESTS.find(r => r === row.contact_request) ?? null
   const callable = opts.revealNumber ? dialableNumber(row.from_number) : null
   const given = opts.revealNumber ? dialableNumber(row.callback_number) : null
-  const promise = opts.promisesCallback ? promisedCallback(row.created_at, transcript) : null
+  const promise = opts.promisesCallback ? promisedCallback(row.created_at, transcript, opts.callbackRule ?? null) : null
 
   return {
     ref: row.public_ref ?? null,
@@ -182,7 +190,7 @@ export function toPublicCall(
     caller: callable ?? (opts.revealNumber ? 'Dolt nummer' : maskPhone(row.from_number)),
     ...(callable ? { callbackNumber: callable } : {}),
     ...(given && given !== callable ? { givenNumber: given } : {}),
-    ...(promise ? { promisedCallback: promise.label } : {}),
+    ...(promise ? { promisedCallback: promise.label, promisedCallbackDeadline: promise.deadline } : {}),
     ...(opts.sms ? { sms: { ...opts.sms, replies: opts.sms.replies.map(r => ({ at: r.at, text: redactPii(r.text) })) } } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,
