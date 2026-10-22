@@ -80,9 +80,13 @@ export function verifyElksCallback(
 ): { ok: true; ip: string | null } | { ok: false; reason: ElksAuthFailure; ip: string | null } {
   const ip = callerIp(req)
   const expected = process.env.ELKS_WEBHOOK_TOKEN?.trim()
+  // Bara under ett tokenbyte: den förra tokenen godtas tills numren hos 46elks
+  // pekar på den nya. Tas bort ur miljön när bytet är klart.
+  const previous = process.env.ELKS_WEBHOOK_TOKEN_PREVIOUS?.trim()
 
   if (!expected) return { ok: false, reason: 'no_token_configured', ip }
-  if (!token || !equals(expected, token)) return { ok: false, reason: 'bad_token', ip }
+  const matches = Boolean(token) && (equals(expected, token) || (Boolean(previous) && equals(previous!, token)))
+  if (!matches) return { ok: false, reason: 'bad_token', ip }
 
   if (requireIp && ip && !ELKS_CALLBACK_IPS.includes(ip as (typeof ELKS_CALLBACK_IPS)[number])) {
     return { ok: false, reason: 'bad_ip', ip }
