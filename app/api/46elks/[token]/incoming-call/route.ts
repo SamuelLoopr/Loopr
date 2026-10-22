@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { ELKS_FAILURE_TEXT, verifyElksCallback } from '@/lib/elks-callback'
 import { normalizeE164 } from '@/lib/phone'
+import { rememberInboundCall } from '@/lib/elks-hangup'
 
 // 46elks voice_start: någon har ringt vårt svenska nummer.
 //
@@ -115,6 +116,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   // vilken agent som ska svara.
   const sipUri = `sip:${e164}@${SIP_HOST};transport=${SIP_TRANSPORT}`
   console.log(`[46elks/incoming-call] ${from ?? 'okänd'} -> ${e164}, kopplar till ${sipUri} (samtal ${callId})`)
+
+  // Samtals-id:t för att kunna lägga på från vår sida (lib/elks-hangup.ts).
+  // Efter svaret, så 46elks aldrig väntar på det, och bara för agenter med
+  // sip_hangup_tool påslaget — för alla andra skrivs ingenting.
+  if (known?.agent_id && callId) {
+    after(rememberInboundCall(supabase, { agentId: known.agent_id as string, callid: callId, from, to: e164 }))
+  }
 
   return NextResponse.json({ connect: sipUri })
 }

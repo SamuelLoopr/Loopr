@@ -158,6 +158,12 @@ export interface PromptOptions {
    *               agenten saknar namn. Se kommentaren vid konstanten.
    */
   businessName?: string | null
+  /**
+   * Verktyget agenten lägger på med, när det inte är ElevenLabs end_call. På
+   * SIP-vägen med sip_hangup_tool (lib/elks-hangup.ts) heter det lagg_pa.
+   * Gäller bara när canEndCall är true. Utelämnat: end_call, som förut.
+   */
+  hangUpTool?: string
 }
 
 /**
@@ -185,16 +191,17 @@ const HANG_UP_TEXT: Record<PromptLanguage, string> = {
 export function buildSystemPrompt(
   basePrompt: string,
   language: PromptLanguage,
-  { canEndCall = true, businessName }: PromptOptions = {},
+  { canEndCall = true, businessName, hangUpTool }: PromptOptions = {},
 ): string {
   const company = businessName === undefined
     ? LEGACY_DEFAULT_BUSINESS_NAME
     : (businessName?.trim() || null)
   // Standardvärdet true gör att alla befintliga anropsställen beter sig exakt
   // som förut — bara den som uttryckligen säger annat får den andra texten.
-  const endCall = language === 'sv'
-    ? (canEndCall ? END_CALL_SV : END_CALL_SV_NO_HANGUP)
-    : (canEndCall ? END_CALL_EN : END_CALL_EN_NO_HANGUP)
+  const endCallWith = canEndCall
+    ? (language === 'sv' ? END_CALL_SV : END_CALL_EN)
+    : (language === 'sv' ? END_CALL_SV_NO_HANGUP : END_CALL_EN_NO_HANGUP)
+  const endCall = canEndCall && hangUpTool ? endCallWith.replace('end_call', hangUpTool) : endCallWith
   const language_ = language === 'sv' ? LANGUAGE_SV : LANGUAGE_EN
   const speaking = language === 'sv' ? speakingSv(company) : SPEAKING_EN
   const base = basePrompt.split(HANG_UP_PLACEHOLDER).join(canEndCall ? '' : HANG_UP_TEXT[language])

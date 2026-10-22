@@ -56,6 +56,9 @@ const SECRET_HEADER = 'x-loopr-init-secret'
  */
 const LOOKUP_BUDGET_MS = 2_500
 
+/** Namnet på påläggningsverktyget hos ElevenLabs (lib/elks-hangup.ts). */
+const HANGUP_TOOL_NAME = 'lagg_pa'
+
 interface InitRequest {
   caller_id?: string | null
   called_number?: string | null
@@ -150,6 +153,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   if (!resolved) return NextResponse.json(PASSTHROUGH)
 
   const language = resolved.language === 'en' ? 'en' : 'sv'
+  // Verktyget finns bara när det är skapat hos ElevenLabs och id:t satt i miljön.
+  const hangupTool = resolved.sipHangupTool ? process.env.ELEVENLABS_HANGUP_TOOL_ID?.trim() || null : null
 
   const tts: Record<string, unknown> = {}
   if (resolved.voiceId) tts.voice_id = resolved.voiceId
@@ -175,9 +180,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
           prompt: buildSystemPrompt(fillCallbackPlaceholder(resolved.promptText || DEFAULT_PROMPT[language], new Date(), {
             sms: resolved.promiseSms,
           }), language, {
-            canEndCall: resolved.sipCanEndCall,
+            canEndCall: resolved.sipCanEndCall || Boolean(hangupTool),
             businessName: resolved.businessName ?? undefined,
+            ...(hangupTool ? { hangUpTool: HANGUP_TOOL_NAME } : {}),
           }),
+          // lagg_pa (lib/elks-hangup.ts) läggs till för det här samtalet bara
+          // när agenten har sip_hangup_tool. SIP-agentens egna verktyg rörs inte.
+          ...(hangupTool ? { tool_ids: [hangupTool] } : {}),
         },
         first_message: resolved.welcomeMessage || DEFAULT_WELCOME[language],
         language,
@@ -199,6 +208,8 @@ interface ResolvedAgent {
   speed: number | null
   /** agents.sip_can_end_call (044): end_call även på SIP. Standard false. */
   sipCanEndCall: boolean
+  /** agents.sip_hangup_tool (045): lagg_pa och vår påläggning hos 46elks. */
+  sipHangupTool: boolean
   /** {{SMS_RAD}} lovar ett sms (lib/callback-sms.ts). */
   promiseSms: boolean
 }
@@ -247,17 +258,22 @@ async function resolveAgentForNumber(calledNumber: string | null, callerId: stri
     stability: (a.voice_stability as number) ?? null,
     similarityBoost: (a.voice_similarity_boost as number) ?? null,
     speed: (a.voice_speed as number) ?? null,
-    sipCanEndCall: await sipCanEndCall(supabase, a.id as string),
+    ...(await sipEndCallSettings(supabase, a.id as string)),
     // Inom samma tidsbudget som resten av uppslagningen. Fel ger inget löfte.
     promiseSms: await promiseSms(supabase, a.id as string, (a.prompt_text as string) ?? null, callerId).catch(() => false),
   }
 }
 
 /**
- * agents.sip_can_end_call (044), läst för sig: saknas kolumnen eller går
- * något fel gäller false, alltså dagens beteende.
+ * agents.sip_can_end_call (044) och sip_hangup_tool (045), lästa för sig i en
+ * fråga: saknas en kolumn eller går något fel gäller false för båda, alltså
+ * dagens beteende.
  */
-async function sipCanEndCall(supabase: ReturnType<typeof createSupabaseServiceClient>, agentId: string): Promise<boolean> {
-  const { data, error } = await supabase.from('agents').select('sip_can_end_call').eq('id', agentId).maybeSingle()
-  return !error && data?.sip_can_end_call === true
+async function sipEndCallSettings(
+  supabase: ReturnType<typeof createSupabaseServiceClient>,
+  agentId: string,
+): Promise<{ sipCanEndCall: boolean; sipHangupTool: boolean }> {
+  const { data, error } = await supabase.from('agents').select('sip_can_end_call, sip_hangup_tool').eq('id', agentId).maybeSingle()
+  if (error || !data) return { sipCanEndCall: false, sipHangupTool: false }
+  return { sipCanEndCall: data.sip_can_end_call === true, sipHangupTool: data.sip_hangup_tool === true }
 }
