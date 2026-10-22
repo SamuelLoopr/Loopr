@@ -4,6 +4,7 @@ import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { buildSystemPrompt, DEFAULT_PROMPT, DEFAULT_WELCOME } from '@/lib/shared-prompt'
 import { fillCallbackPlaceholder } from '@/lib/callback-time'
 import { promiseSms } from '@/lib/callback-sms'
+import { linkConversation } from '@/lib/elks-hangup'
 import { recordSipCall } from '@/lib/call-ingest'
 import { isMissingColumn } from '@/lib/db-errors'
 
@@ -143,6 +144,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             conversationId,
           })
           console.log(`[conversation-init] call_logs: ${result} (${conversationId})`)
+          // Bara för agenter med lagg_pa: koppla konversationen till 46elks
+          // samtals-id redan nu, så påläggningen blir snabb (lib/elks-hangup.ts).
+          if (resolved?.sipHangupTool) await linkConversation(supabase, { conversationId, calledNumber, callerId })
         } catch (err) {
           console.error('[conversation-init] Kunde inte logga samtalet:', err)
         }

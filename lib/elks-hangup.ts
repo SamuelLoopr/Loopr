@@ -12,9 +12,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 //   1. rememberInboundCall — incoming-call sparar 46elks samtals-id, men BARA
 //      för agenter med sip_hangup_tool = true, och efter att samtalet redan
 //      kopplats (next/server `after`). Inga andra agenter får någon skrivning.
-//   2. hangUpConversation — anropas av verktyget lagg_pa när agenten talat
-//      klart (execution_mode post_tool_speech hos ElevenLabs). Hittar exakt
-//      ett pågående samtal, låser raden och lägger på.
+//   2. linkConversation — conversation-init kopplar konversationen till
+//      samtals-id:t när den startar, så att steg 3 blir en enda fråga.
+//   3. hangUpConversation — anropas av verktyget lagg_pa när agenten talat
+//      klart (execution_mode post_tool_speech hos ElevenLabs). Låser raden,
+//      hämtar samtals-id:t och lägger på direkt.
 //
 // 46elks svar loggas aldrig och sparas aldrig — de innehåller bland annat
 // URL:en med vår webhook-token. Bara status och längd.
@@ -27,10 +29,14 @@ const CANDIDATE_WINDOW_MS = 60 * 60 * 1000
 
 /**
  * Paus mellan att agenten talat klart och att linjen bryts, så att de sista
- * stavelserna hinner fram. Samma tanke som pausen på en sekund efter strömmen
- * på Twilio-vägen (lib/twiml-pause.ts).
+ * stavelserna hinner fram i telefonen. ElevenLabs väntar redan tills talet är
+ * klart (post_tool_speech); det här täcker bara ljudet som är på väg.
+ * Uppmätt 2026-10-22: med 1 s och sökning bröts linjen ≈5 s efter hejdå.
  */
-export const HANGUP_DELAY_MS = 1_000
+export const HANGUP_DELAY_MS = 300
+
+/** Hur färskt ett 46elks-samtal ska vara för att kopplas vid konversationens start. */
+const LINK_WINDOW_MS = 2 * 60 * 1000
 
 const CONVERSATION_ID = /^conv_[A-Za-z0-9]+$/
 
@@ -89,6 +95,39 @@ export async function rememberInboundCall(
   }
 }
 
+/**
+ * Kopplar en konversation till sitt 46elks-samtal redan när den startar
+ * (conversation-init, efter svaret), så att påläggningen sedan är en enda
+ * databasfråga. Nyaste okopplade raden till samma nummer från samma
+ * uppringare de senaste två minuterna. Kastar aldrig; utan koppling faller
+ * hangUpConversation tillbaka på att söka.
+ */
+export async function linkConversation(
+  supabase: SupabaseClient,
+  input: { conversationId: string; calledNumber: string | null; callerId: string | null },
+): Promise<void> {
+  try {
+    if (!CONVERSATION_ID.test(input.conversationId) || !input.calledNumber) return
+    const since = new Date(Date.now() - LINK_WINDOW_MS).toISOString()
+    let q = supabase
+      .from('elks_inbound_calls')
+      .select('id')
+      .eq('to_number', input.calledNumber)
+      .is('conversation_id', null)
+      .gte('created_at', since)
+      .order('created_at', { ascending: false })
+      .limit(2)
+    if (input.callerId) q = q.eq('from_number', input.callerId)
+    const { data } = await q
+    // Två okopplade samtal från samma nummer inom två minuter: avstå hellre.
+    if (!data || data.length !== 1) return
+    await supabase.from('elks_inbound_calls').update({ conversation_id: input.conversationId })
+      .eq('id', data[0].id).is('conversation_id', null)
+  } catch (err) {
+    console.error('[elks-hangup] Kopplingen kastade:', err)
+  }
+}
+
 export type HangupOutcome =
   | 'hung_up' | 'not_ongoing' | 'already' | 'no_match' | 'ambiguous'
   | 'not_configured' | 'malformed' | 'failed'
@@ -96,9 +135,14 @@ export type HangupOutcome =
 /**
  * Lägger på samtalet som hör till en konversation som just avslutats.
  *
- * Kandidater: sparade samtal till samma nummer den senaste timmen som inte
- * redan lagts på, och som 46elks säger fortfarande pågår. Är det fler än ett
- * avgör uppringarens nummer. Exakt ett måste återstå — annars görs ingenting,
+ * Snabbvägen: raden kopplades till konversationen när den startade
+ * (linkConversation). Då låses den och samtals-id:t hämtas i samma fråga, och
+ * hangup=yes skickas direkt — ingen kontroll först. Ett samtal som redan
+ * hunnit avslutas ger bara "redan avslutat" i loggen.
+ *
+ * Reservvägen, utan koppling: sparade samtal till samma nummer den senaste
+ * timmen som 46elks säger fortfarande pågår. Är de fler än ett avgör
+ * uppringarens nummer. Exakt ett måste återstå — annars görs ingenting,
  * eftersom fel samtal är värre än en linje som ligger kvar.
  */
 export async function hangUpConversation(
@@ -106,18 +150,77 @@ export async function hangUpConversation(
   input: { conversationId: string; calledNumber: string; callerId: string | null },
   { delayMs = HANGUP_DELAY_MS }: { delayMs?: number } = {},
 ): Promise<HangupOutcome> {
+  const t0 = Date.now()
   if (!CONVERSATION_ID.test(input.conversationId) || !/^\+\d{6,15}$/.test(input.calledNumber)) return 'malformed'
   const auth = elksAuth()
   if (!auth) return 'not_configured'
 
-  // Högst en gång per konversation.
-  const { data: done } = await supabase
+  // ── Snabbvägen: lås och hämta i en fråga ─────────────────────────────────
+  const now = new Date().toISOString()
+  const { data: linked, error: linkedError } = await supabase
     .from('elks_inbound_calls')
-    .select('id')
+    .update({ hangup_requested_at: now })
     .eq('conversation_id', input.conversationId)
-    .limit(1)
-  if (done && done.length > 0) return 'already'
+    .is('hangup_requested_at', null)
+    .select('id, callid')
+    .maybeSingle()
+  if (linkedError) console.error(`[elks-hangup] Låset misslyckades: ${linkedError.message}`)
 
+  let target = linked as { id: string; callid: string } | null
+  let path = 'kopplad'
+  if (!target) {
+    // Redan pålagd (raden finns men är låst)?
+    const { data: done } = await supabase
+      .from('elks_inbound_calls').select('id').eq('conversation_id', input.conversationId).limit(1)
+    if (done && done.length > 0) return 'already'
+    const found = await searchCandidate(supabase, auth, input)
+    if (typeof found === 'string') return found
+    target = found
+    path = 'sökt'
+  }
+  const tLock = Date.now()
+
+  if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs))
+  const tWait = Date.now()
+
+  let outcome: HangupOutcome
+  let what: string
+  try {
+    const res = await fetch(`${ELKS_CALLS}/${encodeURIComponent(target.callid)}`, {
+      method: 'POST',
+      headers: { authorization: auth, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ hangup: 'yes' }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    })
+    if (res.ok) {
+      const after = summarize(await res.json().catch(() => null))
+      outcome = 'hung_up'
+      what = `lagt på (${after.state ?? '?'}, ${after.duration ?? '?'} s)`
+    } else if (res.status === 403 && (await res.text().catch(() => '')).includes('Invalid callid')) {
+      outcome = 'not_ongoing'
+      what = 'redan avslutat'
+    } else {
+      outcome = 'failed'
+      what = `46elks HTTP ${res.status}`
+    }
+  } catch {
+    outcome = 'failed'
+    what = 'nätverksfel mot 46elks'
+  }
+  const tEnd = Date.now()
+
+  const detail = `${what} · ${tEnd - t0} ms (${path} ${tLock - t0}, väntan ${tWait - tLock}, 46elks ${tEnd - tWait})`
+  await supabase.from('elks_inbound_calls').update({ hangup_result: detail.slice(0, 100) }).eq('id', target.id)
+  console.log(`[elks-hangup] ${input.conversationId}: ${detail}`)
+  return outcome
+}
+
+/** Reservvägen: exakt ett pågående sparat samtal, låst. */
+async function searchCandidate(
+  supabase: SupabaseClient,
+  auth: string,
+  input: { conversationId: string; calledNumber: string; callerId: string | null },
+): Promise<{ id: string; callid: string } | HangupOutcome> {
   const since = new Date(Date.now() - CANDIDATE_WINDOW_MS).toISOString()
   const { data: rows, error } = await supabase
     .from('elks_inbound_calls')
@@ -142,44 +245,14 @@ export async function hangUpConversation(
   if (match.length > 1) match = match.filter(r => input.callerId && r.from_number === input.callerId)
   if (match.length === 0) return ongoing.length > 1 ? 'ambiguous' : 'no_match'
   if (match.length > 1) return 'ambiguous'
-  const target = match[0]
 
-  // Lås raden innan något görs.
   const { data: locked, error: lockError } = await supabase
     .from('elks_inbound_calls')
     .update({ conversation_id: input.conversationId, hangup_requested_at: new Date().toISOString() })
-    .eq('id', target.id)
+    .eq('id', match[0].id)
     .is('hangup_requested_at', null)
-    .select('id')
+    .select('id, callid')
     .maybeSingle()
   if (lockError || !locked) return 'already'
-
-  if (delayMs > 0) await new Promise(r => setTimeout(r, delayMs))
-
-  let outcome: HangupOutcome
-  let detail: string
-  const before = await callState(auth, target.callid)
-  if (before.state !== 'ongoing') {
-    outcome = 'not_ongoing'
-    detail = `inte pågående (${before.state ?? 'okänt'})`
-  } else {
-    try {
-      const res = await fetch(`${ELKS_CALLS}/${encodeURIComponent(target.callid)}`, {
-        method: 'POST',
-        headers: { authorization: auth, 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ hangup: 'yes' }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      })
-      const after = res.ok ? summarize(await res.json().catch(() => null)) : { state: null, duration: null }
-      outcome = res.ok ? 'hung_up' : 'failed'
-      detail = res.ok ? `lagt på (${after.state ?? '?'}, ${after.duration ?? '?'} s)` : `46elks HTTP ${res.status}`
-    } catch {
-      outcome = 'failed'
-      detail = 'nätverksfel mot 46elks'
-    }
-  }
-
-  await supabase.from('elks_inbound_calls').update({ hangup_result: detail.slice(0, 100) }).eq('id', target.id)
-  console.log(`[elks-hangup] ${input.conversationId}: ${detail}`)
-  return outcome
+  return locked as { id: string; callid: string }
 }
