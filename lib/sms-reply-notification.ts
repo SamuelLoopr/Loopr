@@ -56,7 +56,7 @@ export function buildSmsReplyNotification(reply: SmsReplyNotification): { subjec
     : 'Inget samtal från numret hittades de senaste 30 dagarna.'
 
   const text = [
-    `${reply.businessName} — sms-svar`,
+    `Sms-svar till ${reply.businessName}`,
     formatWhen(reply.receivedAt),
     '',
     ...(reply.callerName ? [`Namn: ${reply.callerName}`] : []),
@@ -74,10 +74,10 @@ export function buildSmsReplyNotification(reply: SmsReplyNotification): { subjec
   <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e6e1ee;">
     <tr>
       <td style="padding:20px 24px;border-bottom:1px solid #eeeaf4;">
-        <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#7C3AED;">
-          ${esc(reply.businessName)}
+        <p style="margin:0;font-size:12px;font-weight:700;letter-spacing:0.12em;color:#7C3AED;">
+          Loopr · samtalsnotis
         </p>
-        <p style="margin:4px 0 0;font-size:18px;font-weight:700;">Sms-svar</p>
+        <p style="margin:4px 0 0;font-size:18px;font-weight:700;">Sms-svar till ${esc(reply.businessName)}</p>
         <p style="margin:2px 0 0;font-size:13px;color:#6b6676;">${esc(formatWhen(reply.receivedAt))}</p>
       </td>
     </tr>

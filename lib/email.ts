@@ -36,6 +36,14 @@ const TIMEOUT_MS = 10_000
 const from = () => process.env.EMAIL_FROM?.trim()
 
 /**
+ * Svarsadressen när anroparen inte anger någon: en brevlåda som faktiskt tar
+ * emot post (notiser@tryloopr.se hos one.com). Utan den går svar till
+ * avsändaren, och en avsändare som inte kan ta emot post är en negativ
+ * signal hos mottagarens skräppostfilter. EMAIL_REPLY_TO kan ändra den.
+ */
+const defaultReplyTo = () => process.env.EMAIL_REPLY_TO?.trim() || 'notiser@tryloopr.se'
+
+/**
  * Går det att skicka alls? Anropas innan ett utskick förbereds, så att arbete
  * (och databasskrivningar) inte görs i onödan när leverantören inte är
  * inkopplad än.
@@ -64,7 +72,7 @@ export async function sendEmail(message: EmailMessage): Promise<SendResult> {
         subject: message.subject,
         html: message.html,
         text: message.text,
-        ...(message.replyTo ? { reply_to: message.replyTo } : {}),
+        reply_to: message.replyTo ?? defaultReplyTo(),
       }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     })
