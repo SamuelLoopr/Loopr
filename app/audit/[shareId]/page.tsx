@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, use } from 'react'
-import { supabase } from '@/lib/supabase'
 import { AuditReport, type Audit } from '@/app/components/AuditReport'
 
 // ─── Public page ───────────────────────────────────────────────────────────────
@@ -11,15 +10,14 @@ export default function PublicAuditPage({ params }: { params: Promise<{ shareId:
   const [notFound, setNotFound] = useState(false)
 
   useEffect(() => {
-    supabase
-      .from('audits')
-      .select('*')
-      .eq('share_id', shareId)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) { setNotFound(true); return }
-        setAudit(data)
+    // Via servern (app/api/public/audit), inte direkt mot databasen.
+    fetch(`/api/public/audit/${encodeURIComponent(shareId)}`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(body => {
+        if (!body?.audit) { setNotFound(true); return }
+        setAudit(body.audit)
       })
+      .catch(() => setNotFound(true))
   }, [shareId])
 
   if (notFound) {

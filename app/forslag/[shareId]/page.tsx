@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, use } from 'react'
-import { supabase } from '@/lib/supabase'
 import LooprLogo from '@/app/components/LooprLogo'
 
 interface Proposal {
@@ -33,26 +32,13 @@ export default function PublicProposalPage({ params }: { params: Promise<{ share
 
   useEffect(() => {
     async function load() {
-      const { data, error } = await supabase
-        .from('proposals')
-        .select('*')
-        .eq('share_id', shareId)
-        .single()
-
-      if (error || !data) { setNotFound(true); return }
-      setProposal(data)
-
-      // Advance status to 'viewed'
-      const newStatus = data.status === 'sent' ? 'viewed' : data.status
-      await supabase.from('proposals').update({ status: newStatus }).eq('id', data.id)
-
-      // Load sender profile
-      const { data: p } = await supabase
-        .from('profile')
-        .select('display_name, business_name, tagline, bio, phone, avatar_url')
-        .limit(1)
-        .maybeSingle()
-      if (p) setProfile(p)
+      // Via servern (app/api/public/proposal), som också flyttar statusen
+      // från "sent" till "viewed".
+      const res = await fetch(`/api/public/proposal/${encodeURIComponent(shareId)}`).catch(() => null)
+      const body = res?.ok ? await res.json().catch(() => null) : null
+      if (!body?.proposal) { setNotFound(true); return }
+      setProposal(body.proposal)
+      if (body.profile) setProfile(body.profile)
     }
     load()
   }, [shareId])

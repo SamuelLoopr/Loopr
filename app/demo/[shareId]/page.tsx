@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, use } from 'react'
-import { supabase } from '@/lib/supabase'
 import LooprLogo from '@/app/components/LooprLogo'
 import SmsDemo, { type SmsDemoClient } from '@/app/components/SmsDemo'
 
@@ -11,15 +10,14 @@ export default function DemoPage({ params }: { params: Promise<{ shareId: string
   const [notFound, setNotFound] = useState(false)
 
   useEffect(() => {
-    supabase
-      .from('review_clients')
-      .select('business_name, google_review_url, delay_minutes, message_template')
-      .eq('share_id', shareId)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) { setNotFound(true); return }
-        setClient(data)
+    // Via servern (app/api/public/review-demo), inte direkt mot databasen.
+    fetch(`/api/public/review-demo/${encodeURIComponent(shareId)}`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(body => {
+        if (!body?.client) { setNotFound(true); return }
+        setClient(body.client)
       })
+      .catch(() => setNotFound(true))
   }, [shareId])
 
   const pageStyle: React.CSSProperties = {
