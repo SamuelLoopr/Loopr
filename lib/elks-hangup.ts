@@ -197,8 +197,10 @@ export async function hangUpConversation(
       outcome = 'hung_up'
       what = `lagt på (${after.state ?? '?'}, ${after.duration ?? '?'} s)`
     } else if (res.status === 403 && (await res.text().catch(() => '')).includes('Invalid callid')) {
-      outcome = 'not_ongoing'
-      what = 'redan avslutat'
+      // Betyder INTE att samtalet redan var slut: sedan 2026-10-26 svarar
+      // 46elks så även för pågående samtal. Räknas som misslyckat.
+      outcome = 'failed'
+      what = 'misslyckat: 46elks 403 Invalid callid'
     } else {
       outcome = 'failed'
       what = `46elks HTTP ${res.status}`

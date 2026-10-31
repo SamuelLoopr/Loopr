@@ -3,6 +3,7 @@ import { classifyCall, INSIGHT_VERSION, type CallInsight } from '@/lib/call-insi
 import { isMissingColumn } from '@/lib/db-errors'
 import { notifyCompletedCall, type NotifyAgent } from '@/lib/call-notify'
 import { sendCallbackSms } from '@/lib/call-sms'
+import { shortCallerName, wantsShortCallerName } from '@/lib/caller-name'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
 // Completes call_logs rows for real inbound calls, from ElevenLabs' own record.
@@ -400,7 +401,10 @@ export async function enrichRow(
     summary,
     contact_request: insight.contactRequest,
     contact_note: insight.contactNote,
-    caller_name: insight.callerName,
+    // Kortare namn ("Samuel H.") för agenter med short_caller_name (047).
+    caller_name: insight.callerName && await wantsShortCallerName(supabase, agent.id)
+      ? shortCallerName(insight.callerName)
+      : insight.callerName,
     insight_version: INSIGHT_VERSION,
   }
   // Tokens loggas här eftersom Anthropic inte går att fråga i efterhand
