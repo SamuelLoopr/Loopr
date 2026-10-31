@@ -9,7 +9,7 @@ import { CLIENT_NOTE_MAX, type ClientStatus } from '@/lib/client-status'
 import { CONTACT_REQUEST_LABEL, type PublicCall } from '@/lib/public-calls'
 import { formatBookingWhen, toStockholm } from '@/lib/stockholm-time'
 import { GROUPS, formatDuration, fullWhen, groupOf, offHours, searchHit, statusForGroup } from './logic'
-import { CallNumbers, OffHoursBadge, PromisedCallback, SmsLine, StatusBadge, cx, promiseOverdue } from './ui'
+import { CallNumbers, OffHoursBadge, PriorityBadges, PromisedCallback, SmsLine, StatusBadge, cx, promiseOverdue } from './ui'
 import s from './bos.module.css'
 
 // Det valda ärendet, i en panel bredvid listan: allt om samtalet, status,
@@ -104,6 +104,7 @@ export default function CasePanel({
 
       <section className={s.panelSection}>
         <h3 className={s.sectionLabel}>Vad kunden vill</h3>
+        {(call.urgent || call.business) && <div style={{ display: 'flex', gap: 6, marginBottom: 8 }}><PriorityBadges call={call} /></div>}
         {call.contactRequest ? (
           <>
             <span className={cx(s.badge, s.badgeRequest)}>Vill bli kontaktad · {CONTACT_REQUEST_LABEL[call.contactRequest]}</span>

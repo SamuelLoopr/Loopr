@@ -63,6 +63,8 @@ const BASE_COLS = 'id, created_at, duration_sec, summary, transcript, from_numbe
 const CRM_COLS = `${BASE_COLS}, contact_request, contact_note, public_ref, caller_name, client_status, client_note`
 
 const COLUMN_SETS: { cols: string; editable: boolean }[] = [
+  // 051_priority_flags: brådskande och företag.
+  { cols: `${CRM_COLS}, callback_number, is_urgent, is_business`, editable: true },
   // 042_callback_number: the number the caller gave to be rung back on.
   { cols: `${CRM_COLS}, callback_number`, editable: true },
   // 028_bos_client_crm: name, status, note and the per-call ref for writes.

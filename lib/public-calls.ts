@@ -65,6 +65,10 @@ export interface PublicCall {
    * ärendet fortfarande är nytt.
    */
   promisedCallbackDeadline?: string
+  /** Analysen bedömde samtalet som brådskande (051). Bara satt när sant. */
+  urgent?: true
+  /** Den som ringde gjorde det för ett företag eller en organisation (051). */
+  business?: true
   /**
    * Sms-bekräftelsen efter samtalet och svar på den (043, lib/call-sms.ts).
    * Bara i klientläge och bara för agenter som skickar sms.
@@ -117,6 +121,8 @@ export interface CallRow {
   client_status?: string | null
   client_note?: string | null
   callback_number?: string | null
+  is_urgent?: boolean | null
+  is_business?: boolean | null
 }
 
 const REQUESTS: readonly PublicContactRequest[] = ['meeting', 'quote', 'callback']
@@ -191,6 +197,8 @@ export function toPublicCall(
     ...(callable ? { callbackNumber: callable } : {}),
     ...(given && given !== callable ? { givenNumber: given } : {}),
     ...(promise ? { promisedCallback: promise.label, promisedCallbackDeadline: promise.deadline } : {}),
+    ...(row.is_urgent === true ? { urgent: true as const } : {}),
+    ...(row.is_business === true ? { business: true as const } : {}),
     ...(opts.sms ? { sms: { ...opts.sms, replies: opts.sms.replies.map(r => ({ at: r.at, text: redactPii(r.text) })) } } : {}),
     status: clientStatusOf(row.client_status),
     note: row.client_note ?? null,

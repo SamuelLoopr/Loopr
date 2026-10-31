@@ -903,6 +903,16 @@
   color: #3730a3;
 }
 
+.badgeUrgent {
+  background: #fde2e2;
+  color: #9b1c1c;
+}
+
+.badgeBusiness {
+  background: #fef3c7;
+  color: #854d0e;
+}
+
 .badgeNew {
   background: var(--ink);
   color: #fff;

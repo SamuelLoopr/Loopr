@@ -1,4 +1,5 @@
 import { CONTACT_REQUEST_LABEL, dialableNumber, type PublicContactRequest } from '@/lib/public-calls'
+import { subjectPrefix } from '@/lib/priority-flags'
 
 // Notisen som går till klienten när ett samtal är färdiganalyserat.
 //
@@ -30,6 +31,9 @@ export interface CallNotification {
   /** Absolut länk till samtalet i BOS. */
   url: string
   businessName: string
+  /** Flaggorna från analysen (051). Sätter "Brådskande: " / "Företag: " först i ämnet. */
+  urgent?: boolean
+  business?: boolean
 }
 
 export interface BuiltEmail {
@@ -83,9 +87,9 @@ export function buildCallNotification(call: CallNotification): BuiltEmail {
   // Ämnesraden syns i notiser och på låsta skärmar: namnet eller "Okänd
   // uppringare", aldrig telefonnumret. Numret står i mejlet.
   const subjectWho = call.callerName ?? 'Okänd uppringare'
-  const subject = badge
+  const subject = subjectPrefix(call) + (badge
     ? `${badge}: ${subjectWho}`
-    : `Nytt samtal: ${subjectWho}`
+    : `Nytt samtal: ${subjectWho}`)
 
   const textLines = [
     `Nytt samtal till ${call.businessName}`,

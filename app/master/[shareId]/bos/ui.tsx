@@ -27,6 +27,16 @@ export function StatusBadge({ status }: { status: ClientStatus }) {
   )
 }
 
+/** Brådskande och företag (051), på kortet och i panelen. */
+export function PriorityBadges({ call }: { call: { urgent?: true; business?: true } }) {
+  return (
+    <>
+      {call.urgent && <span className={cx(s.badge, s.badgeUrgent)}>Brådskande</span>}
+      {call.business && <span className={cx(s.badge, s.badgeBusiness)}>Företag</span>}
+    </>
+  )
+}
+
 export function OffHoursBadge({ kind }: { kind: OffHours }) {
   if (!kind) return null
   const { label, hint } = OFF_HOURS_LABEL[kind]

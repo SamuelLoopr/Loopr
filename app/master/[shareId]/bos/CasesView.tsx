@@ -9,7 +9,7 @@ import {
   plural, relativeWhen, searchHit, sortForGroup,
   type Filters, type GroupKey, type StatusFilter, type TimeFilter,
 } from './logic'
-import { CallNumbers, EmptyState, OffHoursBadge, PromisedCallback, Skeleton, SmsLine, StatusBadge, cx, promiseOverdue } from './ui'
+import { CallNumbers, EmptyState, OffHoursBadge, PriorityBadges, PromisedCallback, Skeleton, SmsLine, StatusBadge, cx, promiseOverdue } from './ui'
 import s from './bos.module.css'
 
 // Ärendena: verktygsraden (sök och filter) och tavlan med en kolumn per status.
@@ -275,6 +275,7 @@ function CaseCard({
       {call.sms && <SmsLine sms={call.sms} compact />}
 
       <div className={s.metaRow}>
+        <PriorityBadges call={call} />
         {call.contactRequest && (
           <span className={cx(s.badge, s.badgeRequest)}>
             Vill bli kontaktad · {CONTACT_REQUEST_LABEL[call.contactRequest]}

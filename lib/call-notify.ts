@@ -113,6 +113,15 @@ export async function notifyCompletedCall(
     .maybeSingle()
   const givenNumber = (extra as { callback_number?: string | null } | null)?.callback_number ?? null
 
+  // Brådskande och företag (051), också för sig: utan kolumnerna inget prefix.
+  const { data: flagRow } = await supabase
+    .from('call_logs')
+    .select('is_urgent, is_business')
+    .eq('id', callId)
+    .eq('agent_id', agent.id)
+    .maybeSingle()
+  const flags = (flagRow ?? {}) as { is_urgent?: boolean | null; is_business?: boolean | null }
+
   // Den utlovade återuppringningen, räknad som i prompten — bara om agentens
   // prompt lovar en tid och receptionisten sa den i samtalet.
   const { data: promptRow } = await supabase.from('agents').select('prompt_text').eq('id', agent.id).maybeSingle()
@@ -132,6 +141,8 @@ export async function notifyCompletedCall(
     startedAt: row.created_at,
     url: callUrl(base, agent.shareId, row.public_ref),
     businessName: agent.businessName,
+    urgent: flags.is_urgent === true,
+    business: flags.is_business === true,
   })
 
   const result = await sendEmail({ to: agent.notificationEmail, ...built })

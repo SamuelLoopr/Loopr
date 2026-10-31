@@ -46,11 +46,13 @@ export const QUICK_ACTIONS: { label: string; status: ClientStatus; group: GroupK
   { label: 'Klar', status: 'avslutad', group: 'klart' },
 ]
 
-// Nya samtal: de som vill bli kontaktade först, sedan nyast först. Övriga
-// kolumner: nyast först. Tidsstämplarna från PostgREST har samma format och
+// Nya samtal: brådskande först, sedan företag (051), sedan de som vill bli
+// kontaktade, sedan nyast först. Övriga kolumner: nyast först. Tidsstämplarna från PostgREST har samma format och
 // sorteras därför som strängar.
 const newestFirst = (a: PublicCall, b: PublicCall) => b.startedAt.localeCompare(a.startedAt)
 const requestsFirst = (a: PublicCall, b: PublicCall) =>
+  Number(Boolean(b.urgent)) - Number(Boolean(a.urgent)) ||
+  Number(Boolean(b.business)) - Number(Boolean(a.business)) ||
   Number(Boolean(b.contactRequest)) - Number(Boolean(a.contactRequest)) || newestFirst(a, b)
 
 export function sortForGroup(key: GroupKey, calls: PublicCall[]): PublicCall[] {

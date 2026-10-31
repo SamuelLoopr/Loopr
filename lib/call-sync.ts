@@ -4,6 +4,7 @@ import { isMissingColumn } from '@/lib/db-errors'
 import { notifyCompletedCall, type NotifyAgent } from '@/lib/call-notify'
 import { sendCallbackSms } from '@/lib/call-sms'
 import { shortCallerName, wantsShortCallerName } from '@/lib/caller-name'
+import { wantsPriorityFlags } from '@/lib/priority-flags'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
 // Completes call_logs rows for real inbound calls, from ElevenLabs' own record.
@@ -60,6 +61,8 @@ const SILENT_CALL: CallInsight = {
   aiResolved: null,   // ingenting sades, alltså ingenting att lösa
   callbackNumber: null,
   usage: null,        // ingen modell anropades
+  urgent: null,
+  business: null,
 }
 
 // Which analysis the schema can hold, newest first. The code is deployed ahead
@@ -387,7 +390,11 @@ export async function enrichRow(
   mode: EnrichMode,
 ): Promise<void> {
   const turns = parseTranscript(row.transcript)
-  const insight = callerSpoke(turns) ? await classifyCall(turns, agent.businessName) : SILENT_CALL
+  const spoke = callerSpoke(turns)
+  // Brådskande och företag (051) bara för agenter som slagit på det; för alla
+  // andra är analysen exakt densamma som förut.
+  const flags = spoke && await wantsPriorityFlags(supabase, agent.id)
+  const insight = spoke ? await classifyCall(turns, agent.businessName, { flags }) : SILENT_CALL
   if (!insight) return
 
   // A summary that arrived with the row (e.g. from the inbound webhook), or
@@ -418,13 +425,16 @@ export async function enrichRow(
   // nyast kolumn, först att falla bort.
   const full = { ...withTokens, ai_resolved: insight.aiResolved }
   const withCallback = { ...full, callback_number: insight.callbackNumber }
+  // Flaggorna (051) ytterst av allt, och bara när de bedömts.
+  const withFlags = { ...withCallback, is_urgent: insight.urgent, is_business: insight.business }
+  const patches = flags ? [withFlags, withCallback, full, withTokens, analysis] : [withCallback, full, withTokens, analysis]
 
   const writeVersioned = async () => {
-    for (const patch of [withCallback, full, withTokens, analysis]) {
+    for (const patch of patches) {
       const res = await table().update(patch).eq('id', row.id).or(NEEDS_ANALYSIS)
       // Ett återuppringningsnummer som databasen ändå säger nej till (CHECK,
       // 042) får aldrig fälla resten av analysen: den sparas då utan numret.
-      const numberRefused = patch === withCallback && res.error?.code === '23514'
+      const numberRefused = (patch === withCallback || patch === withFlags) && res.error?.code === '23514'
       if (!isMissingColumn(res.error) && !numberRefused) return res
     }
     return table().update(analysis).eq('id', row.id).or(NEEDS_ANALYSIS)
