@@ -33,7 +33,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const expectedToken = process.env.ELEVENLABS_INIT_TOKEN?.trim()
   const expectedSecret = process.env.ELEVENLABS_INIT_SECRET?.trim()
   const got = req.headers.get(SECRET_HEADER)?.trim()
-  if (!expectedToken || !token || !equals(expectedToken, token) || !expectedSecret || !got || !equals(expectedSecret, got)) {
+  // Under ett byte av hemligheten godtas också den förra (som i conversation-init).
+  const previous = process.env.ELEVENLABS_INIT_SECRET_PREVIOUS?.trim()
+  const secretOk = Boolean(got) && Boolean(expectedSecret)
+    && (equals(expectedSecret!, got!) || (Boolean(previous) && equals(previous!, got!)))
+  if (!expectedToken || !token || !equals(expectedToken, token) || !secretOk) {
     console.warn('[elevenlabs/hangup] Avvisad: token eller hemlig header stämmer inte')
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }

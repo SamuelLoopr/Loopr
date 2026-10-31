@@ -96,7 +96,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const expectedSecret = process.env.ELEVENLABS_INIT_SECRET?.trim()
   if (expectedSecret) {
     const got = req.headers.get(SECRET_HEADER)?.trim()
-    if (!got || !equals(expectedSecret, got)) {
+    // Bara under ett byte av hemligheten: den förra godtas tills ElevenLabs
+    // skickar den nya. Tas bort ur miljön när bytet är klart.
+    const previous = process.env.ELEVENLABS_INIT_SECRET_PREVIOUS?.trim()
+    if (!got || !(equals(expectedSecret, got) || (Boolean(previous) && equals(previous!, got)))) {
       console.warn('[conversation-init] Avvisad: hemlig header saknas eller stämmer inte')
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
