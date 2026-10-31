@@ -115,7 +115,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   // ElevenLabs vet vilket av sina trunk-nummer samtalet gäller och därmed
   // vilken agent som ska svara.
   const sipUri = `sip:${e164}@${SIP_HOST};transport=${SIP_TRANSPORT}`
-  console.log(`[46elks/incoming-call] ${from ?? 'okänd'} -> ${e164}, kopplar till ${sipUri} (samtal ${callId})`)
+  // Uppringarens nummer loggas bara med de fyra sista siffrorna: Vercels
+  // loggar är ingen plats för personuppgifter.
+  const fromMasked = from ? `…${from.replace(/\D/g, '').slice(-4)}` : 'okänd'
+  console.log(`[46elks/incoming-call] ${fromMasked} -> ${e164}, kopplar till ${sipUri} (samtal ${callId})`)
 
   // Samtals-id:t för att kunna lägga på från vår sida (lib/elks-hangup.ts).
   // Efter svaret, så 46elks aldrig väntar på det, och bara för agenter med

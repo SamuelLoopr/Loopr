@@ -22,6 +22,11 @@ drop policy if exists "Anon full access to review_clients" on review_clients;
 drop policy if exists "Allow anon insert" on review_clients;
 drop policy if exists "Allow anon update" on review_clients;
 drop policy if exists "Allow anon select" on review_clients;
+-- De verkliga namnen i databasen (borttagna för hand 2026-10-31, eftersom
+-- raderna ovan inte träffade):
+drop policy if exists "Allow anon insert on review_clients" on review_clients;
+drop policy if exists "Allow anon update on review_clients" on review_clients;
+drop policy if exists "Allow anon select on review_clients" on review_clients;
 
 drop policy if exists "Anon may read profile" on profile;
 drop policy if exists "Anon full access to profile" on profile;

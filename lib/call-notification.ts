@@ -80,9 +80,12 @@ export function buildCallNotification(call: CallNotification): BuiltEmail {
   // tel: vill ha numret utan mellanslag; E.164 är redan rent.
   const telHref = from
 
+  // Ämnesraden syns i notiser och på låsta skärmar: namnet eller "Okänd
+  // uppringare", aldrig telefonnumret. Numret står i mejlet.
+  const subjectWho = call.callerName ?? 'Okänd uppringare'
   const subject = badge
-    ? `${badge}: ${who}`
-    : `Nytt samtal: ${who}`
+    ? `${badge}: ${subjectWho}`
+    : `Nytt samtal: ${subjectWho}`
 
   const textLines = [
     `Nytt samtal till ${call.businessName}`,

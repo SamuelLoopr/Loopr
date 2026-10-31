@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAllowedEmail } from '@/lib/admin'
+import { RATE_LIMITS, overRateLimit } from '@/lib/rate-limit'
 import {
   evaluateAccess,
   trialEndsAtFromNow,
@@ -118,6 +119,16 @@ export async function middleware(request: NextRequest) {
   // dashboard rather than on the sales pitch. Handled here rather than in
   // app/page.tsx so every session decision in the app stays in one file.
   const isRoot = pathname === '/'
+
+  // Publika data-routes (BOS-länken, /audit, /forslag, /demo): rate limiting
+  // per IP (lib/rate-limit.ts). Första gruppen vars prefix matchar gäller.
+  const limit = RATE_LIMITS.find(g => matchesPrefix(pathname, [g.prefix]))
+  if (limit && await overRateLimit(request, limit)) {
+    return NextResponse.json(
+      { error: 'För många förfrågningar. Försök igen om en stund.' },
+      { status: 429, headers: { 'retry-after': String(limit.windowSeconds) } },
+    )
+  }
 
   // Public route: hand it straight through, untouched and unslowed.
   if (!isProtectedPage && !isProtectedApi && !isRoot) {

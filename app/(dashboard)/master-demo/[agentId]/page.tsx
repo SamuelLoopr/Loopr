@@ -440,6 +440,20 @@ export default function MasterDemoBuilderPage({ params }: { params: Promise<{ ag
                 >
                   Öppna publik sida ↗
                 </a>
+                <button
+                  onClick={() => {
+                    // Den gamla länken slutar fungera direkt, också i notismejl
+                    // som redan skickats. Därför en bekräftelse.
+                    if (window.confirm('Byta länk? Den gamla länken slutar fungera direkt, även i mejl som redan skickats. Skicka den nya länken till kunden.')) activateVoice()
+                  }}
+                  disabled={busy === 'voice'}
+                  style={{
+                    ...btn, backgroundColor: 'rgba(255,255,255,0.05)', color: 'var(--slate)',
+                    border: '1px solid rgba(255,255,255,0.1)', opacity: busy === 'voice' ? 0.5 : 1,
+                  }}
+                >
+                  {busy === 'voice' ? '⟳ Byter…' : '↻ Byt länk'}
+                </button>
               </>
             ) : (
               <button
