@@ -122,7 +122,7 @@ Behöver du ställa en sista fråga eller bekräfta något, gör det före farv�
  * att lägga på, i stället för att själv försöka.
  */
 const END_CALL_SV_NO_HANGUP = `SÅ AVSLUTAR DU SAMTALET
-När ärendet är klart: sammanfatta kort vad som händer härnäst, tacka, och säg tydligt att personen kan lägga på, till exempel "Tack för samtalet! Du kan lägga på nu. Hejdå!" Efter det säger du ingenting mer. Du kan inte lägga på själv, så fortsätt inte prata och ställ inga nya frågor efter farvälet. Hör du inget efter farvälet, vänta tyst. Säger personen något nytt efter farvälet, svara kort och avsluta igen med "Hejdå!".`
+När ärendet är klart: sammanfatta kort vad som händer härnäst, tacka, och säg tydligt att personen kan lägga på, till exempel "Tack för samtalet. Du kan lägga på nu. Hejdå." Efter det säger du ingenting mer. Du kan inte lägga på själv, så fortsätt inte prata och ställ inga nya frågor efter farvälet. Hör du inget efter farvälet, vänta tyst. Säger personen något nytt efter farvälet, svara kort och avsluta igen med "Hejdå.".`
 
 const LANGUAGE_EN =
   'IMPORTANT: Always reply in English, whatever language the caller uses.'
