@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse, after } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase-server'
 import { ingestConversation, type PostCallData } from '@/lib/call-ingest'
+import { alertOngoingLongCalls } from '@/lib/long-calls'
 import {
   FAILURE_TEXT,
   SIGNATURE_HEADER,
@@ -89,6 +90,8 @@ export async function POST(req: NextRequest) {
       finish().catch(err => console.error('[elevenlabs-webhook] Efterarbetet misslyckades:', err)),
     )
   }
+  // Linjer som fastnat hos 46elks (lib/long-calls.ts), efter svaret.
+  after(alertOngoingLongCalls(createSupabaseServiceClient()))
 
   switch (outcome) {
     case 'ok':

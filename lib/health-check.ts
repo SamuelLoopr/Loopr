@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { describeLongCall, findLongCalls } from '@/lib/long-calls'
 
 // Morgonkontrollen (/api/cron/health): letar efter det som tystnade i
 // november 2026 — samtal som inte kom fram, notiser som inte gick ut och en
@@ -49,6 +50,11 @@ export async function checkHealth(supabase: SupabaseClient, now: Date = new Date
     .gte('created_at', since)
     .lt('created_at', new Date(now.getTime() - 60 * 60 * 1000).toISOString())
   if (stuck) problems.push(`${stuck} samtal har stått som pågående i mer än en timme.`)
+
+  // ── Linjer som fastnat hos 46elks (mer än 15 minuter) ─────────────────────
+  const long = await findLongCalls(now)
+  if (long === null) problems.push('46elks samtalshistorik gick inte att läsa.')
+  for (const c of long ?? []) problems.push(describeLongCall(c))
 
   // ── Notiser som inte gick ut ──────────────────────────────────────────────
   // Bara kunder som får notiser: klientläge och en adress satt.

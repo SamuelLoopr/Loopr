@@ -19,7 +19,7 @@ import { sendSms } from '@/lib/sms'
 // siffrorna i ett nummer. Kastar aldrig; en varning som inte går ut får inte
 // fälla det som varnade.
 
-export type AlertKind = 'call_failed' | 'notify_failed' | 'morning'
+export type AlertKind = 'call_failed' | 'notify_failed' | 'morning' | 'long_call'
 
 function bucket(now: Date): string {
   return now.toISOString().slice(0, 13)

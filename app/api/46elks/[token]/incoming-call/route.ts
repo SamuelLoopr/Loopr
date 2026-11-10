@@ -4,6 +4,7 @@ import { ELKS_FAILURE_TEXT, verifyElksCallback } from '@/lib/elks-callback'
 import { normalizeE164 } from '@/lib/phone'
 import { rememberInboundCall } from '@/lib/elks-hangup'
 import { connectAction, loadFallback } from '@/lib/fallback-number'
+import { alertOngoingLongCalls } from '@/lib/long-calls'
 
 // 46elks voice_start: någon har ringt vårt svenska nummer.
 //
@@ -128,8 +129,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     after(rememberInboundCall(supabase, { agentId: known.agent_id as string, callid: callId, from, to: e164 }))
   }
 
+  // Linjer som fastnat (lib/long-calls.ts), efter svaret så samtalet aldrig väntar.
+  after(alertOngoingLongCalls(supabase))
+
   // Reservnumret (052) om ElevenLabs inte svarar. Av för alla tills det
   // sätts; då är svaret exakt { connect: sipUri } som förut.
   const fallback = known?.agent_id ? await loadFallback(supabase, known.agent_id as string, e164) : null
-  return NextResponse.json(connectAction(sipUri, fallback))
+  const nextUrl = fallback ? `${new URL(req.url).origin}/api/46elks/${encodeURIComponent(token)}/after-connect?t=${Date.now()}` : null
+  return NextResponse.json(connectAction(sipUri, fallback, nextUrl))
 }
