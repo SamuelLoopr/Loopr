@@ -6,6 +6,7 @@ import type { PublicContactRequest } from '@/lib/public-calls'
 import { CALLBACK_PLACEHOLDER, promisedCallback } from '@/lib/callback-time'
 import { callbackRuleFor } from '@/lib/callback-rule'
 import { parseTranscript } from '@/lib/call-transcript'
+import { sendOpsAlert } from '@/lib/ops-alert'
 
 // Skickar notisen för ett färdiganalyserat samtal — anropas från
 // lib/call-sync.ts direkt efter att analysen sparats.
@@ -155,6 +156,8 @@ export async function notifyCompletedCall(
   // ── Släpp bokningen så nästa sidladdning försöker igen ────────────────────
   const reason = result.status === 'failed' ? result.error : result.reason
   console.error(`[call-notify] Notis misslyckades för samtal ${callId}: ${reason}`)
+  // Operatören får veta direkt, högst en gång i timmen (lib/ops-alert.ts).
+  await sendOpsAlert(supabase, 'notify_failed', `Notismejlet till ${agent.businessName} gick inte ut: ${reason}`.slice(0, 280))
 
   const { error: releaseError } = await supabase
     .from('call_logs')

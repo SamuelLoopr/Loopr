@@ -5,6 +5,7 @@ import { notifyCompletedCall, type NotifyAgent } from '@/lib/call-notify'
 import { sendCallbackSms } from '@/lib/call-sms'
 import { shortCallerName, wantsShortCallerName } from '@/lib/caller-name'
 import { wantsPriorityFlags } from '@/lib/priority-flags'
+import { sendOpsAlert } from '@/lib/ops-alert'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
 // Completes call_logs rows for real inbound calls, from ElevenLabs' own record.
@@ -206,12 +207,23 @@ export async function settleRow(
   conversationId: string,
   patch: Record<string, unknown>,
 ): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('call_logs')
     .update(patch)
     .eq('id', rowId)
     .eq('status', 'in_progress')
+    .select('agent_id, created_at')
   if (error) console.error(`[call-sync] Kunde inte uppdatera samtal ${conversationId}: ${error.message}`)
+
+  // Ett samtal som aldrig kom fram är ett fel hos oss eller ElevenLabs, och
+  // operatören ska få veta direkt (lib/ops-alert.ts). Bara när raden faktiskt
+  // ändrades här, och inte för tysta samtal där den som ringde bara la på.
+  const message = typeof patch.error_message === 'string' ? patch.error_message : ''
+  if (patch.status === 'error' && data?.length && !message.includes('utan att något sades')) {
+    const { data: agent } = await supabase.from('agents').select('business_name, name').eq('id', data[0].agent_id).maybeSingle()
+    const name = agent?.business_name?.trim() || agent?.name || 'okänd agent'
+    await sendOpsAlert(supabase, 'call_failed', `Ett samtal till ${name} kom inte fram. ${message.replace(/ \(conversation_id=.*\)$/, '')} (${conversationId}).`)
+  }
 }
 
 /**
