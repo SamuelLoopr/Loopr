@@ -21,6 +21,27 @@ import { sendSms } from '@/lib/sms'
 
 export type AlertKind = 'call_failed' | 'notify_failed' | 'morning' | 'long_call'
 
+/**
+ * Sms:et säger bara vad som hänt och hänvisar till mejlet. Utan å, ä och ö:
+ * ett enda sådant tecken gör sms:et till UCS-2, där en del rymmer 70 tecken i
+ * stället för 160 (varningen 10 november blev tre delar).
+ */
+const SMS_TEXT: Record<AlertKind, string> = {
+  call_failed: 'Loopr: ett samtal kom inte fram. Se mejl.',
+  notify_failed: 'Loopr: ett notismejl gick inte ut. Se mejl.',
+  morning: 'Loopr: morgonkontrollen hittade problem. Se mejl.',
+  long_call: 'Loopr: en linje har varit uppkopplad over 15 min. Se mejl.',
+}
+
+/** Bara GSM-tecken och högst en sms-del, vad som än skickas in. */
+export function singleSms(text: string): string {
+  const plain = text
+    .replace(/[åä]/g, 'a').replace(/[ÅÄ]/g, 'A').replace(/ö/g, 'o').replace(/Ö/g, 'O')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9 .,:;!?()\-+%\/]/g, '')
+  return plain.slice(0, 160)
+}
+
 function bucket(now: Date): string {
   return now.toISOString().slice(0, 13)
 }
@@ -29,7 +50,7 @@ export async function sendOpsAlert(
   supabase: SupabaseClient,
   kind: AlertKind,
   message: string,
-  { now = new Date(), throttle = true }: { now?: Date; throttle?: boolean } = {},
+  { now = new Date(), throttle = true, smsText }: { now?: Date; throttle?: boolean; smsText?: string } = {},
 ): Promise<'sent' | 'throttled' | 'off' | 'failed'> {
   try {
     const email = process.env.OPS_ALERT_EMAIL?.trim()
@@ -47,7 +68,7 @@ export async function sendOpsAlert(
 
     const results = await Promise.allSettled([
       email ? sendEmail({ to: email, subject: `Loopr-varning: ${message.split('\n')[0]}`, text: message, html: `<pre style="font-family:inherit;white-space:pre-wrap;">${escapeHtml(message)}</pre>` }) : null,
-      sms ? sendSms({ from: process.env.OPS_ALERT_SMS_FROM?.trim() || 'Loopr', to: sms, message: `Loopr-varning: ${message}`.slice(0, 300) }) : null,
+      sms ? sendSms({ from: process.env.OPS_ALERT_SMS_FROM?.trim() || 'Loopr', to: sms, message: singleSms(smsText ?? SMS_TEXT[kind]) }) : null,
     ])
     const sent = results.some(r => r.status === 'fulfilled' && r.value && (r.value as { status: string }).status === 'sent')
     if (!sent) console.error(`[ops-alert] Varningen (${kind}) gick inte ut`)

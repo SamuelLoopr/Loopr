@@ -47,7 +47,10 @@ export async function GET(req: NextRequest) {
   }
 
   const message = [`Morgonkontroll: ${problems.length} problem`, ...problems.map(p => `- ${p}`)].join('\n')
-  const alert = await sendOpsAlert(supabase, 'morning', message, { throttle: false })
+  const alert = await sendOpsAlert(supabase, 'morning', message, {
+    throttle: false,
+    smsText: `Loopr: morgonkontrollen hittade ${problems.length} problem. Se mejl.`,
+  })
   console.log(`[cron/health] ${problems.length} problem, varning: ${alert}`)
   return NextResponse.json({ ok: false, problems: problems.length, alert })
 }
