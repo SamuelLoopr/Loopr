@@ -101,7 +101,7 @@ Sätt false om något av detta stämmer:
 - personen fick inte svar på sin fråga, eller samtalet bröts med ärendet ouppklarat
 Ett samtal där personen bara ville ha praktisk information — öppettider, adress, vad företaget gör — och fick den, är true.
 
-caller_name — namnet som den som ringde själv uppger, som det sades (en person, eller ett företag om det är allt som nämns). Tom sträng om inget namn sägs. Gissa aldrig, och ta inte receptionistens eller det uppringda företagets namn.
+caller_name — namnet som den som ringde själv uppger, som det sades (en person, eller ett företag om det är allt som nämns). Tom sträng om inget namn sägs. Gissa aldrig, och ta inte receptionistens eller det uppringda företagets namn. Ta hela namnet som den som ringde sa, med efternamn, även när receptionisten bara upprepar förnamnet.
 
 callback_number — telefonnumren i transkriptet är utbytta mot platshållare: [telefonnummer 1], [telefonnummer 2] och så vidare, där samma nummer alltid har samma platshållare. Skriv platshållaren exakt som den står om den som ringer uttryckligen ger det numret för att bli uppringd på: säger att vi ska ringa just det numret, eller svarar på receptionistens fråga om vilket nummer vi når hen på. Annars en tom sträng — också när ett nummer bara nämns i förbigående, är någon annans, är företagets eget, eller är ett order-, kund- eller ärendenummer. Skriv aldrig siffror här, och hitta aldrig på en platshållare.
 

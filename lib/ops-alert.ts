@@ -42,6 +42,8 @@ export function singleSms(text: string): string {
   return plain.slice(0, 160)
 }
 
+const TIME = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+
 function bucket(now: Date): string {
   return now.toISOString().slice(0, 13)
 }
@@ -66,8 +68,11 @@ export async function sendOpsAlert(
       if (!error && (!data || data.length === 0)) return 'throttled'
     }
 
+    // Tiden står sist i mejlet, så det syns när kontrollen körde även om
+    // mejlet kommer fram sent.
+    const body = `${message}\n\nTid: ${TIME.format(now)}`
     const results = await Promise.allSettled([
-      email ? sendEmail({ to: email, subject: `Loopr-varning: ${message.split('\n')[0]}`, text: message, html: `<pre style="font-family:inherit;white-space:pre-wrap;">${escapeHtml(message)}</pre>` }) : null,
+      email ? sendEmail({ to: email, subject: `Loopr-varning: ${message.split('\n')[0]}`, text: body, html: `<pre style="font-family:inherit;white-space:pre-wrap;">${escapeHtml(body)}</pre>` }) : null,
       sms ? sendSms({ from: process.env.OPS_ALERT_SMS_FROM?.trim() || 'Loopr', to: sms, message: singleSms(smsText ?? SMS_TEXT[kind]) }) : null,
     ])
     const sent = results.some(r => r.status === 'fulfilled' && r.value && (r.value as { status: string }).status === 'sent')

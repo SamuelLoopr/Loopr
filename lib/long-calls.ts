@@ -52,13 +52,19 @@ export function describeLongCall(c: LongCall): string {
 /**
  * Direkt varning för pågående linjer som fastnat. Anropas vid varje nytt
  * inkommande samtal och vid post-call (efter svaret), högst en varning i
- * timmen. Kastar aldrig.
+ * timmen. Returnerar antalet linjer (null = 46elks gick inte att läsa) och
+ * varningens utfall, för loggen i cron_runs. Kastar aldrig.
  */
-export async function alertOngoingLongCalls(supabase: SupabaseClient): Promise<void> {
+export async function alertOngoingLongCalls(
+  supabase: SupabaseClient,
+): Promise<{ stuck: number | null; alert: string | null }> {
   try {
-    const stuck = (await findLongCalls(new Date(), 2 * 60 * 60 * 1000))?.filter(c => c.ongoing) ?? []
-    if (stuck.length) await sendOpsAlert(supabase, 'long_call', stuck.map(describeLongCall).join('\n'))
+    const found = await findLongCalls(new Date(), 2 * 60 * 60 * 1000)
+    const stuck = found?.filter(c => c.ongoing) ?? []
+    const alert = stuck.length ? await sendOpsAlert(supabase, 'long_call', stuck.map(describeLongCall).join('\n')) : null
+    return { stuck: found === null ? null : stuck.length, alert }
   } catch (err) {
     console.error('[long-calls] Kastade:', err)
+    return { stuck: null, alert: null }
   }
 }

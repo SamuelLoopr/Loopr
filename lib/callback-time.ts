@@ -111,9 +111,46 @@ export interface CallbackRule {
   withinMinutes: number
   /** "Förmiddag" betyder workStart till den här tiden. */
   morningEnd: string
+  /**
+   * Kontorets egna stängda dagar, 'YYYY-MM-DD' (till exempel mellan jul och
+   * nyår). null = nyckeln saknas: allt som förut. Satt (även tom) slår också
+   * på att agenten säger datumet när återuppringningen ligger mer än två dagar
+   * bort, efter en röd dag eller stängd dag.
+   */
+  closedDays: Set<string> | null
 }
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/** 'YYYY-MM-DD' som är ett riktigt datum. */
+function isIsoDate(v: unknown): v is string {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false
+  const [y, m, d] = v.split('-').map(Number)
+  const t = new Date(Date.UTC(y, m - 1, d))
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d
+}
+
+/** Vardag och inte en av kontorets stängda dagar. */
+function isOpenDay(date: string, rule: CallbackRule): boolean {
+  return isWorkday(date) && !rule.closedDays?.has(date)
+}
+
+/**
+ * Ligger en röd dag eller en av kontorets stängda dagar mellan samtalsdagen
+ * och återuppringningen? En vanlig helg räknas inte.
+ */
+function skipsClosedDay(callDay: string, date: string, closed: Set<string>): boolean {
+  for (let d = addDays(callDay, 1); d < date; d = addDays(d, 1)) {
+    if (closed.has(d) || swedishHolidays(Number(d.slice(0, 4))).has(d)) return true
+  }
+  return false
+}
+
+/** Antal dagar från a till b, båda 'YYYY-MM-DD'. */
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number), [by, bm, bd] = b.split('-').map(Number)
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000)
+}
 
 /** agents.callback_rule som den står i databasen -> regel, eller null om den saknas eller är ogiltig. */
 export function parseCallbackRule(raw: unknown): CallbackRule | null {
@@ -125,7 +162,13 @@ export function parseCallbackRule(raw: unknown): CallbackRule | null {
   if (typeof until !== 'string' || !HHMM.test(until) || until <= workStart) return null
   if (typeof morningEnd !== 'string' || !HHMM.test(morningEnd) || morningEnd <= workStart) return null
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 5 || minutes > 240) return null
-  return { workStart, withinHourUntil: until, withinMinutes: minutes, morningEnd }
+  let closedDays: Set<string> | null = null
+  if (r.closed_days !== undefined && r.closed_days !== null) {
+    if (!Array.isArray(r.closed_days) || r.closed_days.length > 366) return null
+    if (!r.closed_days.every(isIsoDate)) return null
+    closedDays = new Set(r.closed_days as string[])
+  }
+  return { workStart, withinHourUntil: until, withinMinutes: minutes, morningEnd, closedDays }
 }
 
 export interface CallbackSlot {
@@ -194,12 +237,17 @@ function dayText(date: string): string {
  *     vardag på förmiddagen — "imorgon förmiddag" om det är dagen efter,
  *     "på måndag förmiddag" efter en helg, annars "på [veckodag] förmiddag"
  * Förmiddagslöften passeras vid morningEnd den dagen.
+ *
+ * Med closed_days räknas kontorets stängda dagar som röda dagar. Ligger
+ * återuppringningen mer än två dagar bort och efter en röd dag eller stängd
+ * dag säger agenten datumet: "på måndag 4 januari förmiddag". En vanlig helg
+ * ger fortfarande "på måndag förmiddag".
  */
 function ruleSlot(startedAt: Date | string, rule: CallbackRule): CallbackSlot {
   const at = typeof startedAt === 'string' ? new Date(startedAt) : startedAt
   const { date: callDay, time } = toStockholm(at)
 
-  if (isWorkday(callDay) && time >= rule.workStart && time < rule.withinHourUntil) {
+  if (isOpenDay(callDay, rule) && time >= rule.workStart && time < rule.withinHourUntil) {
     const deadline = new Date(at.getTime() + rule.withinMinutes * 60_000)
     const latest = toStockholm(deadline).time
     const spoken = rule.withinMinutes === 60 ? 'inom en timme' : `inom ${rule.withinMinutes} minuter`
@@ -209,16 +257,21 @@ function ruleSlot(startedAt: Date | string, rule: CallbackRule): CallbackSlot {
 
   let date: string
   let spoken: string
-  if (isWorkday(callDay) && time < rule.workStart) {
+  if (isOpenDay(callDay, rule) && time < rule.workStart) {
     date = callDay
     spoken = 'idag på förmiddagen'
   } else {
     date = addDays(callDay, 1)
-    while (!isWorkday(date)) date = addDays(date, 1)
+    while (!isOpenDay(date, rule)) date = addDays(date, 1)
     const afterWeekend = weekdayIndex(date) === 0 && date !== addDays(callDay, 1)
-    spoken = date === addDays(callDay, 1)
-      ? 'imorgon förmiddag'
-      : afterWeekend ? 'på måndag förmiddag' : `på ${WEEKDAY[weekdayIndex(date)]} förmiddag`
+    if (rule.closedDays && daysBetween(callDay, date) > 2 && skipsClosedDay(callDay, date, rule.closedDays)) {
+      const [, m, d] = date.split('-').map(Number)
+      spoken = `på ${WEEKDAY[weekdayIndex(date)]} ${d} ${MONTH[m - 1]} förmiddag`
+    } else {
+      spoken = date === addDays(callDay, 1)
+        ? 'imorgon förmiddag'
+        : afterWeekend ? 'på måndag förmiddag' : `på ${WEEKDAY[weekdayIndex(date)]} förmiddag`
+    }
   }
   const day = dayText(date)
   return { date, kind: 'morning', deadline: fromStockholm(date, rule.morningEnd).toISOString(), morning: true,
