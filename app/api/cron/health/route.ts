@@ -42,10 +42,14 @@ export async function GET(req: NextRequest) {
 
   const ranAt = new Date()
   const supabase = createSupabaseServiceClient()
-  const problems = await checkHealth(supabase, ranAt)
+  const notes: string[] = []
+  const problems = await checkHealth(supabase, ranAt, notes)
+  // Anteckningar (till exempel att Resend-DNS inte gick att fråga) larmar
+  // inte, men skrivs i cron_runs.alert.
+  const note = notes.length ? notes.join('; ') : null
   if (problems.length === 0) {
     console.log('[cron/health] Allt ser bra ut')
-    await logCronRun(supabase, { job: 'health', ranAt, ok: true, problems: 0, alert: null, durationMs: Date.now() - ranAt.getTime() })
+    await logCronRun(supabase, { job: 'health', ranAt, ok: true, problems: 0, alert: note, durationMs: Date.now() - ranAt.getTime() })
     return NextResponse.json({ ok: true, problems: 0 })
   }
 
@@ -56,6 +60,6 @@ export async function GET(req: NextRequest) {
     smsText: `Loopr: morgonkontrollen hittade ${problems.length} problem. Se mejl.`,
   })
   console.log(`[cron/health] ${problems.length} problem, varning: ${alert}`)
-  await logCronRun(supabase, { job: 'health', ranAt, ok: false, problems: problems.length, alert, durationMs: Date.now() - ranAt.getTime() })
+  await logCronRun(supabase, { job: 'health', ranAt, ok: false, problems: problems.length, alert: note ? `${alert}; ${note}` : alert, durationMs: Date.now() - ranAt.getTime() })
   return NextResponse.json({ ok: false, problems: problems.length, alert })
 }
