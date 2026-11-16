@@ -52,6 +52,11 @@ const SUMMARY_COLUMNS = [
   'sms_id',
 ] as const
 
+/** Personuppgifterna i sales_calls (055), tömda med sammanfattningsperioden. */
+const SALES_CALL_COLUMNS = [
+  'caller_name', 'email', 'summary', 'current_handling', 'opening_hours', 'offered_slots', 'booking_uid',
+] as const
+
 export interface RetentionSetting {
   user_id: string
   agent_id: string
@@ -80,6 +85,9 @@ export interface AgentOutcome {
   /** 46elks samtals-id (elks_inbound_calls, 045) äldre än sammanfattningsperioden. */
   inboundCallsDue: number
   inboundCallsDeleted: number
+  /** Säljlinjens samtal (sales_calls, 055) med personuppgifter kvar efter sammanfattningsperioden. */
+  salesCallsDue: number
+  salesCallsCleared: number
   elevenLabsDeleted: number
   errors: string[]
 }
@@ -138,7 +146,7 @@ export async function runRetention(
       transcriptDays: s.transcript_days, summaryDays: s.summary_days,
       transcriptsDue: 0, summariesDue: 0,
       transcriptsCleared: 0, summariesCleared: 0, smsRepliesDue: 0, smsRepliesDeleted: 0,
-      inboundCallsDue: 0, inboundCallsDeleted: 0,
+      inboundCallsDue: 0, inboundCallsDeleted: 0, salesCallsDue: 0, salesCallsCleared: 0,
       elevenLabsDeleted: 0, errors: [],
     }
 
@@ -183,7 +191,21 @@ export async function runRetention(
     if (inboundError && !isMissingTable(inboundError)) out.errors.push(inboundError.message)
     const inboundIds = (inboundRows ?? []).map(r => r.id as string)
     out.inboundCallsDue = inboundIds.length
-    result.scanned += tRows.length + sRows.length + replyIds.length + inboundIds.length
+
+    // Säljlinjens samtal (055): namn, e-post och sammanfattning töms med
+    // sammanfattningsperioden. Företag, bransch och intresse är affärsdata
+    // och behålls. Saknas tabellen finns inget att gallra.
+    const { data: salesRows, error: salesError } = await supabase
+      .from('sales_calls')
+      .select('id')
+      .eq('agent_id', s.agent_id)
+      .lt('created_at', cutoff(s.summary_days))
+      .or(SALES_CALL_COLUMNS.map(c => `${c}.not.is.null`).join(','))
+      .limit(500)
+    if (salesError && !isMissingTable(salesError)) out.errors.push(salesError.message)
+    const salesIds = (salesRows ?? []).map(r => r.id as string)
+    out.salesCallsDue = salesIds.length
+    result.scanned += tRows.length + sRows.length + replyIds.length + inboundIds.length + salesIds.length
 
     if (!dryRun && s.enabled) {
       out.transcriptsCleared = await clear(supabase, tRows.map(r => r.id as string), TRANSCRIPT_COLUMNS, out)
@@ -197,6 +219,13 @@ export async function runRetention(
         const { error: deleteError } = await supabase.from('call_sms_replies').delete().in('id', replyIds)
         if (deleteError) out.errors.push(deleteError.message)
         else out.smsRepliesDeleted = replyIds.length
+      }
+      if (salesIds.length > 0) {
+        const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
+        for (const c of SALES_CALL_COLUMNS) patch[c] = null
+        const { error: clearError } = await supabase.from('sales_calls').update(patch).in('id', salesIds)
+        if (clearError) out.errors.push(clearError.message)
+        else out.salesCallsCleared = salesIds.length
       }
 
       // Hos ElevenLabs bara om kunden uttryckligen slagit på det. Oåterkalleligt

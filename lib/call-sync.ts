@@ -5,6 +5,7 @@ import { notifyCompletedCall, type NotifyAgent } from '@/lib/call-notify'
 import { sendCallbackSms } from '@/lib/call-sms'
 import { shortCallerName, wantsShortCallerName } from '@/lib/caller-name'
 import { wantsPriorityFlags } from '@/lib/priority-flags'
+import { isSalesAgent, processSalesCall } from '@/lib/sales-lead'
 import { sendOpsAlert } from '@/lib/ops-alert'
 import { callerSpoke, formatTranscript, parseTranscript, type Turn } from '@/lib/call-transcript'
 
@@ -486,6 +487,13 @@ export async function enrichRow(
       await notifyCompletedCall(supabase, agent, row.id)
     } catch (err) {
       console.error('[call-sync] Notis kastade:', err)
+    }
+    // Looprs egen säljlinje (055): lead i CRM:et och mejl till Samuel. Bara
+    // för agenter med kind = 'sales'; isolerat på samma sätt som notisen.
+    try {
+      if (await isSalesAgent(supabase, agent.id)) await processSalesCall(supabase, agent.id, row.id)
+    } catch (err) {
+      console.error('[call-sync] Säljsteget kastade:', err)
     }
   }
 }

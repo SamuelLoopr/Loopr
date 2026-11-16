@@ -18,6 +18,15 @@ const LANGUAGE_SV =
   'VIKTIGT: Du ska ALLTID svara på svenska, oavsett vilket språk kunden använder. Använd aldrig engelska.'
 
 /**
+ * Undantaget för Looprs egen säljlinje (agents.kind = 'sales', 055): den som
+ * inte förstår svenska får en mening på engelska och ett löfte om att någon
+ * återkommer. Ingen kunds receptionist får det här — bara när anroparen
+ * uttryckligen skickar englishFallback.
+ */
+const ENGLISH_EXCEPTION_SV =
+  ' Undantag: om personen inte förstår svenska, säg en kort mening på engelska att den här linjen är på svenska, be om e-postadress och säg att någon återkommer på engelska. Gå sedan tillbaka till svenska.'
+
+/**
  * Hur agenten ska prata. Operatörens egen text, tillagd 2026-10-04.
  *
  * Ligger här och inte i kundens prompt_text eftersom det gäller alla vägar och
@@ -164,6 +173,11 @@ export interface PromptOptions {
    * Gäller bara när canEndCall är true. Utelämnat: end_call, som förut.
    */
   hangUpTool?: string
+  /**
+   * Säljlinjen (055): tillåter en engelsk mening till den som inte förstår
+   * svenska. Utelämnat eller false: språkregeln exakt som förut.
+   */
+  englishFallback?: boolean
 }
 
 /**
@@ -191,7 +205,7 @@ const HANG_UP_TEXT: Record<PromptLanguage, string> = {
 export function buildSystemPrompt(
   basePrompt: string,
   language: PromptLanguage,
-  { canEndCall = true, businessName, hangUpTool }: PromptOptions = {},
+  { canEndCall = true, businessName, hangUpTool, englishFallback = false }: PromptOptions = {},
 ): string {
   const company = businessName === undefined
     ? LEGACY_DEFAULT_BUSINESS_NAME
@@ -202,7 +216,7 @@ export function buildSystemPrompt(
     ? (language === 'sv' ? END_CALL_SV : END_CALL_EN)
     : (language === 'sv' ? END_CALL_SV_NO_HANGUP : END_CALL_EN_NO_HANGUP)
   const endCall = canEndCall && hangUpTool ? endCallWith.replace('end_call', hangUpTool) : endCallWith
-  const language_ = language === 'sv' ? LANGUAGE_SV : LANGUAGE_EN
+  const language_ = language === 'sv' ? (englishFallback ? LANGUAGE_SV + ENGLISH_EXCEPTION_SV : LANGUAGE_SV) : LANGUAGE_EN
   const speaking = language === 'sv' ? speakingSv(company) : SPEAKING_EN
   const base = basePrompt.split(HANG_UP_PLACEHOLDER).join(canEndCall ? '' : HANG_UP_TEXT[language])
   // Språkregeln först, sedan hur rösten ska låta, sedan mekaniken, sist

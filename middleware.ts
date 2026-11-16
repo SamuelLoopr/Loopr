@@ -59,9 +59,14 @@ const PROTECTED_PAGES = [
 //   /api/webhooks/elevenlabs/post-call
 //                              ElevenLabs' post-call webhook, authenticated by
 //                              its HMAC signature (lib/elevenlabs-signature.ts)
-//   /api/cal-com/*             reachable as ElevenLabs agent tools during a live
-//                              call, so a session check would break booking
+//   /api/webhooks/elevenlabs/sales/[token]/*
+//                              säljlinjens verktyg (lib/sales-tools.ts), samma
+//                              token + hemlig header som conversation-init
 const PROTECTED_API = [
+  // Cal.com via vår nyckel. Bara dashboardens Kalender-flik anropar dem;
+  // agenternas bokning går genom /api/webhooks/elevenlabs/sales med egen
+  // autentisering. Öppna hade vem som helst kunnat boka i kalendern.
+  '/api/cal-com',
   // Admin-only lookups used by otherwise-public pages. These must stay gated:
   // /api/admin/agent-by-share resolves an agent's internal id, which the public
   // master-demo payload deliberately never exposes.

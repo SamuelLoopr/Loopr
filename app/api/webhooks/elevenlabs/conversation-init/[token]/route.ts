@@ -9,6 +9,7 @@ import { callbackRuleFor } from '@/lib/callback-rule'
 import type { CallbackRule } from '@/lib/callback-time'
 import { recordSipCall } from '@/lib/call-ingest'
 import { isMissingColumn } from '@/lib/db-errors'
+import { isSalesAgent } from '@/lib/sales-lead'
 
 // ElevenLabs conversation initiation webhook: ett samtal är på väg in, och de
 // frågar oss vem agenten ska vara.
@@ -196,6 +197,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
             canEndCall: resolved.sipCanEndCall || Boolean(hangupTool),
             businessName: resolved.businessName ?? undefined,
             ...(hangupTool ? { hangUpTool: HANGUP_TOOL_NAME } : {}),
+            // Bara säljlinjen (055) får svara en mening på engelska.
+            ...(resolved.sales ? { englishFallback: true } : {}),
           }),
         },
         first_message: resolved.welcomeMessage || DEFAULT_WELCOME[language],
@@ -224,6 +227,8 @@ interface ResolvedAgent {
   promiseSms: boolean
   /** agents.callback_rule (046); null = standardregeln. */
   callbackRule: CallbackRule | null
+  /** agents.kind = 'sales' (055): Looprs egen säljlinje. */
+  sales: boolean
 }
 
 /**
@@ -274,6 +279,7 @@ async function resolveAgentForNumber(calledNumber: string | null, callerId: stri
     // Inom samma tidsbudget som resten av uppslagningen. Fel ger inget löfte.
     promiseSms: await promiseSms(supabase, a.id as string, (a.prompt_text as string) ?? null, callerId).catch(() => false),
     callbackRule: await callbackRuleFor(supabase, a.id as string, (a.prompt_text as string) ?? null),
+    sales: await isSalesAgent(supabase, a.id as string),
   }
 }
 

@@ -19,6 +19,8 @@ import { addDays, fromStockholm, toStockholm, weekdayIndex } from '@/lib/stockho
 export const CALLBACK_PLACEHOLDER = '{{ATERUPPRINGNING}}'
 /** Dagens datum, så att agenten förstår "nästa vecka" och liknande. */
 export const TODAY_PLACEHOLDER = '{{IDAG}}'
+/** Klockslaget när samtalet börjar, "14:35" i svensk tid (säljlinjen, 055). */
+export const TIME_PLACEHOLDER = '{{KLOCKAN}}'
 /**
  * ", och du får ett sms med tiden" när ett sms faktiskt kommer att skickas
  * (lib/callback-sms.ts), annars tom. Tom också där inget nummer finns, som i
@@ -281,7 +283,8 @@ function ruleSlot(startedAt: Date | string, rule: CallbackRule): CallbackSlot {
 /**
  * Agentens prompt med {{ATERUPPRINGNING}} utbytt mot tiden för ett samtal som
  * börjar vid `startedAt`, {{IDAG}} mot samtalsdagen ("måndag 19 oktober
- * 2026") och {{SMS_RAD}} mot SMS_LINE när `sms` är sant, annars tomt. Utan
+ * 2026"), {{KLOCKAN}} mot klockslaget ("14:35") och {{SMS_RAD}} mot SMS_LINE
+ * när `sms` är sant, annars tomt. Utan
  * platshållare kommer exakt samma text tillbaka — så alla andra agenters
  * prompter är tecken för tecken oförändrade.
  */
@@ -293,6 +296,7 @@ export function fillCallbackPlaceholder(
   let out = prompt
   if (out.includes(CALLBACK_PLACEHOLDER)) out = out.split(CALLBACK_PLACEHOLDER).join(callbackSlot(startedAt, rule).spoken)
   if (out.includes(TODAY_PLACEHOLDER)) out = out.split(TODAY_PLACEHOLDER).join(todayText(startedAt))
+  if (out.includes(TIME_PLACEHOLDER)) out = out.split(TIME_PLACEHOLDER).join(toStockholm(startedAt).time)
   if (out.includes(SMS_PLACEHOLDER)) out = out.split(SMS_PLACEHOLDER).join(sms ? SMS_LINE : '')
   return out
 }
