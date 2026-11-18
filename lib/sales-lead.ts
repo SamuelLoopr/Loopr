@@ -141,14 +141,12 @@ export async function processSalesCall(supabase: SupabaseClient, agentId: string
     row = { ...row, ...analysed }
 
     // ── Leadet i CRM:et ───────────────────────────────────────────────────
-    if (agent.crm_list_id) {
-      const leadId = await upsertLead(supabase, agent.crm_list_id, row, call)
-      if (leadId) {
-        await supabase.from('sales_calls').update({ lead_id: leadId }).eq('id', row.id)
-        row.lead_id = leadId
-      }
-    } else {
-      console.warn('[sales-lead] agents.crm_list_id saknas — inget lead skapat')
+    // Utan agents.crm_list_id sparas leadet ändå, utan lista (list_id null):
+    // det syns i leads-tabellen och kan flyttas till en lista senare.
+    const leadId = await upsertLead(supabase, agent.crm_list_id, row, call)
+    if (leadId) {
+      await supabase.from('sales_calls').update({ lead_id: leadId }).eq('id', row.id)
+      row.lead_id = leadId
     }
   }
 
@@ -185,10 +183,11 @@ function noteLine(row: SalesRow, call: CallRow): string {
 }
 
 /**
- * Ett lead per företag: finns ett lead i listan med samma nummer uppdateras
- * det och notes får en rad till. Dolt nummer ger alltid ett nytt lead.
+ * Ett lead per företag: finns ett lead från säljlinjen i samma lista (eller
+ * utan lista) med samma nummer uppdateras det och notes får en rad till.
+ * Dolt nummer ger alltid ett nytt lead.
  */
-async function upsertLead(supabase: SupabaseClient, listId: string, row: SalesRow, call: CallRow): Promise<string | null> {
+async function upsertLead(supabase: SupabaseClient, listId: string | null, row: SalesRow, call: CallRow): Promise<string | null> {
   const status = row.meeting_at ? LEAD_STATUS.MOTE : LEAD_STATUS.ATT_KONTAKTA
   const extra = {
     industry: row.industry, missed_calls: row.missed_calls, interest: row.interest, meeting_at: row.meeting_at,
@@ -198,8 +197,10 @@ async function upsertLead(supabase: SupabaseClient, listId: string, row: SalesRo
   interface ExistingLead { id: string; notes: string | null; email: string | null; name: string | null; business: string | null }
   let existing: ExistingLead | null = null
   if (call.from_number) {
-    const { data } = await supabase.from('leads').select('id, notes, email, name, business')
-      .eq('list_id', listId).eq('phone', call.from_number).order('created_at', { ascending: false }).limit(1)
+    let q = supabase.from('leads').select('id, notes, email, name, business')
+      .eq('source', 'loopr_voice').eq('phone', call.from_number).order('created_at', { ascending: false }).limit(1)
+    q = listId ? q.eq('list_id', listId) : q.is('list_id', null)
+    const { data } = await q
     existing = (data?.[0] as ExistingLead | undefined) ?? null
   }
 

@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { LEAD_STATUS, LEAD_STATUSES } from '@/lib/lead-status'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
-interface CrmList { id: string; name: string; device_id: string }
+interface CrmList { id: string; name: string; user_id: string | null }
 
 interface Lead {
   id: string
@@ -162,25 +162,32 @@ export default function CrmPage() {
   const [search, setSearch] = useState('')
   const [importError, setImportError] = useState('')
   const [importing, setImporting] = useState(false)
-  const deviceId = useRef<string>('')
+  // Listorna hör till inloggningen (crm_lists.user_id, 056), inte till
+  // webbläsaren som förut (device_id): samma listor på varje enhet.
+  const userId = useRef<string | null>(null)
+  const [listForm, setListForm] = useState<{ mode: 'new' | 'rename'; id?: string; name: string } | null>(null)
+  const [listError, setListError] = useState('')
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null)
   const csvInputRef = useRef<HTMLInputElement>(null)
 
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    let id = localStorage.getItem('loopr_device_id')
-    if (!id) { id = crypto.randomUUID(); localStorage.setItem('loopr_device_id', id) }
-    deviceId.current = id
-    fetchLists(id)
-  }, [])
+    supabase.auth.getUser().then(({ data }) => {
+      userId.current = data.user?.id ?? null
+      if (userId.current) fetchLists(userId.current)
+      else { setListError('Du är inte inloggad.'); setLoadingLists(false) }
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Lists ─────────────────────────────────────────────────────────────────
   const fetchLists = useCallback(async (uid: string) => {
     setLoadingLists(true)
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('crm_lists')
-      .select('id,name,device_id')
-      .eq('device_id', uid)
+      .select('id,name,user_id')
+      .eq('user_id', uid)
       .order('created_at')
+    if (error) setListError('Kunde inte läsa listorna: ' + error.message)
     const rows = (data ?? []) as CrmList[]
     setLists(rows)
     if (rows.length > 0) {
@@ -212,30 +219,38 @@ export default function CrmPage() {
     setLoadingLeads(false)
   }
 
-  async function createList() {
-    const name = window.prompt('Namn på ny CRM-lista:')?.trim()
-    if (!name) return
-    const { data, error } = await supabase
-      .from('crm_lists')
-      .insert({ name, device_id: deviceId.current })
-      .select('id,name,device_id')
-      .single()
-    if (error || !data) { alert('Kunde inte skapa lista: ' + (error?.message ?? '')); return }
-    const newList = data as CrmList
-    setLists(prev => [...prev, newList])
-    selectList(newList.id)
-  }
-
-  async function renameList(list: CrmList) {
-    const name = window.prompt('Nytt namn:', list.name)?.trim()
-    if (!name || name === list.name) return
-    await supabase.from('crm_lists').update({ name }).eq('id', list.id)
-    setLists(prev => prev.map(l => l.id === list.id ? { ...l, name } : l))
+  // Ett fält på sidan i stället för window.prompt: dialogen saknas i vissa
+  // webbläsare (bland annat inbäddade), och då hände ingenting utan besked.
+  async function submitListForm() {
+    if (!listForm) return
+    const name = listForm.name.trim()
+    if (!name) { setListError('Skriv ett namn på listan.'); return }
+    setListError('')
+    if (listForm.mode === 'new') {
+      if (!userId.current) { setListError('Du är inte inloggad.'); return }
+      const { data, error } = await supabase
+        .from('crm_lists')
+        .insert({ name, user_id: userId.current })
+        .select('id,name,user_id')
+        .single()
+      if (error || !data) { setListError('Kunde inte skapa listan: ' + (error?.message ?? 'okänt fel')); return }
+      const newList = data as CrmList
+      setLists(prev => [...prev, newList])
+      selectList(newList.id)
+    } else if (listForm.id) {
+      const { error } = await supabase.from('crm_lists').update({ name }).eq('id', listForm.id)
+      if (error) { setListError('Kunde inte byta namn: ' + error.message); return }
+      setLists(prev => prev.map(l => l.id === listForm.id ? { ...l, name } : l))
+    }
+    setListForm(null)
   }
 
   async function deleteList(list: CrmList) {
-    if (!confirm(`Ta bort listan "${list.name}"? Alla leads i listan får list_id = null.`)) return
-    await supabase.from('crm_lists').delete().eq('id', list.id)
+    // Två tryck i stället för confirm(), av samma skäl som ovan.
+    if (confirmDeleteId !== list.id) { setConfirmDeleteId(list.id); return }
+    setConfirmDeleteId(null)
+    const { error } = await supabase.from('crm_lists').delete().eq('id', list.id)
+    if (error) { setListError('Kunde inte ta bort listan: ' + error.message); return }
     const remaining = lists.filter(l => l.id !== list.id)
     setLists(remaining)
     if (remaining.length > 0) {
@@ -323,7 +338,7 @@ export default function CrmPage() {
             {importing ? '⟳ Importerar…' : '⬆ Importera CSV'}
           </button>
           <button
-            onClick={createList}
+            onClick={() => { setListError(''); setListForm({ mode: 'new', name: '' }) }}
             className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all"
             style={{ backgroundColor: 'rgba(168,85,247,0.2)', color: 'var(--brick)', border: '1px solid rgba(168,85,247,0.3)' }}
           >
@@ -337,6 +352,31 @@ export default function CrmPage() {
           ⚠️ {importError}
         </p>
       )}
+
+      {/* ── List form ─────────────────────────────────────────────────────── */}
+      {listForm && (
+        <form
+          onSubmit={e => { e.preventDefault(); submitListForm() }}
+          className="flex items-center gap-2"
+        >
+          <input
+            autoFocus
+            value={listForm.name}
+            onChange={e => setListForm({ ...listForm, name: e.target.value })}
+            placeholder={listForm.mode === 'new' ? 'Namn på ny CRM-lista' : 'Nytt namn'}
+            maxLength={80}
+            className="px-3 py-2 rounded-lg text-sm outline-none"
+            style={{ backgroundColor: 'rgba(255,255,255,0.06)', color: 'var(--cream)', border: '1px solid rgba(255,255,255,0.15)', minWidth: 260 }}
+          />
+          <button type="submit" className="px-3 py-2 rounded-lg text-xs font-semibold" style={{ backgroundColor: 'rgba(168,85,247,0.25)', color: 'var(--brick)', border: '1px solid rgba(168,85,247,0.4)' }}>
+            {listForm.mode === 'new' ? 'Skapa' : 'Spara'}
+          </button>
+          <button type="button" onClick={() => { setListForm(null); setListError('') }} className="px-3 py-2 rounded-lg text-xs" style={{ color: 'var(--slate)' }}>
+            Avbryt
+          </button>
+        </form>
+      )}
+      {listError && <p className="text-sm" style={{ color: '#ef4444' }}>{listError}</p>}
 
       {/* ── List tabs ─────────────────────────────────────────────────────── */}
       {loadingLists ? (
@@ -372,7 +412,7 @@ export default function CrmPage() {
                 }}
               >
                 <button
-                  onClick={() => renameList(list)}
+                  onClick={() => { setListError(''); setListForm({ mode: 'rename', id: list.id, name: list.name }) }}
                   title="Byt namn"
                   className="px-1.5 py-2 text-xs transition-colors hover:bg-white/10"
                   style={{ color: 'var(--slate)' }}
@@ -381,11 +421,11 @@ export default function CrmPage() {
                 </button>
                 <button
                   onClick={() => deleteList(list)}
-                  title="Ta bort"
+                  title={confirmDeleteId === list.id ? 'Tryck igen för att ta bort listan. Leads i listan blir kvar utan lista.' : 'Ta bort'}
                   className="px-1.5 py-2 text-xs transition-colors hover:bg-white/10"
-                  style={{ color: 'var(--slate)' }}
+                  style={{ color: confirmDeleteId === list.id ? '#ef4444' : 'var(--slate)' }}
                 >
-                  🗑
+                  {confirmDeleteId === list.id ? 'Ta bort?' : '🗑'}
                 </button>
               </div>
             </div>
